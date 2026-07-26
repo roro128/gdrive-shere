@@ -1,11 +1,17 @@
+import { animate } from 'motion';
+import type {
+  AnimationOptions,
+  AnimationPlaybackControlsWithThen,
+  DOMKeyframesDefinition
+} from 'motion';
+
 export function animateElement(
   element: HTMLElement,
-  keyframes: Keyframe[],
-  options: KeyframeAnimationOptions
-): Animation | null {
-  if (typeof element.animate !== 'function') return null;
+  keyframes: DOMKeyframesDefinition,
+  options: AnimationOptions
+): AnimationPlaybackControlsWithThen | null {
   try {
-    return element.animate(keyframes, { ...options, fill: options.fill ?? 'both' });
+    return animate(element, keyframes, options);
   } catch {
     return null;
   }

@@ -41,11 +41,11 @@
     if (card)
       animateElement(
         card,
-        [
-          { opacity: 0, transform: 'translateY(14px)' },
-          { opacity: 1, transform: 'translateY(0)' }
-        ],
-        { duration: 450, easing: 'ease-out' }
+        {
+          opacity: [0, 1],
+          transform: ['translateY(14px)', 'translateY(0)']
+        },
+        { duration: 0.45, ease: 'easeOut' }
       );
     supportsPasskeys = typeof window !== 'undefined' && 'PublicKeyCredential' in window;
     if (setupMode && typeof window !== 'undefined') {

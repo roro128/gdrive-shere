@@ -53,6 +53,7 @@
     "@better-auth/passkey": "^1.6.25",
     "@simplewebauthn/server": "latest",
     "better-auth": "^1.6.25",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "motion": "^12.42.2"
   }
 }

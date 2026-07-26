@@ -212,11 +212,11 @@
     if (shell)
       animateElement(
         shell,
-        [
-          { opacity: 0, transform: 'translateY(10px)' },
-          { opacity: 1, transform: 'translateY(0)' }
-        ],
-        { duration: 380, easing: 'ease-out' }
+        {
+          opacity: [0, 1],
+          transform: ['translateY(10px)', 'translateY(0)']
+        },
+        { duration: 0.38, ease: 'easeOut' }
       );
     void loadFiles();
     void loadShareInvitations();
@@ -296,8 +296,8 @@
       target.dataset.moveMotion = 'running';
       animateElement(
         target,
-        [{ transform: 'scale(1)' }, { transform: 'scale(1.015)' }, { transform: 'scale(1)' }],
-        { duration: 260, easing: 'ease-out' }
+        { scale: [1, 1.015, 1] },
+        { duration: 0.26, ease: 'easeOut' }
       );
       window.setTimeout(() => delete target.dataset.moveMotion, 280);
     }
