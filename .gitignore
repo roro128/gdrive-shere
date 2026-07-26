@@ -1,0 +1,37 @@
+node_modules/
+.svelte-kit/
+dist/
+build/
+.wrangler/
+coverage/
+*.tsbuildinfo
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+terraform/crash.log
+.env
+.env.*
+!.env.example
+.envrc
+.dev.vars
+.dev.vars.*
+.secrets/
+secrets/
+
+# Local credentials and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+service-account*.json
+credentials*.json
+client_secret*.json
+
+# Local databases and runtime state
+*.sqlite
+*.sqlite3
+*.db
+wrangler.local.jsonc

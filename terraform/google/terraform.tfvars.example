@@ -1,0 +1,5 @@
+google_bootstrap_project_id = "existing-bootstrap-project"
+google_project_id           = "gdrive-share-prod-1234"
+google_project_name         = "GDrive Share"
+google_billing_account      = "billing-account-id"
+google_parent_folder_id     = ""

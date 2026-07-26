@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const motionAnimate = vi.fn();
+const motionAnimate = vi.hoisted(() => vi.fn());
 vi.mock('motion', () => ({ animate: motionAnimate }));
 
 import { animateElement } from './dom-animation';

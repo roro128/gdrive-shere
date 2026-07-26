@@ -96,6 +96,16 @@ bun run test
 bun run build
 ```
 
+`bun install`은 Lefthook의 `pre-commit`·`pre-push` 훅도 설치합니다. 커밋 전에는
+포맷 검사, Biome·ESLint 린트, Svelte 타입 검사, Knip 데드코드 검사, Vitest를 순서대로
+실행하며, push 전에는 같은 전체 게이트를 다시 실행합니다. 훅을 수동으로 확인하려면
+다음 명령을 사용합니다.
+
+```powershell
+bunx lefthook run pre-commit
+bunx lefthook run pre-push
+```
+
 ### 3. 새 Cloudflare·Google 환경 프로비저닝
 
 완전히 새 환경을 만들 때는 루트 Terraform 모듈을 사용합니다. 이 모듈은 Cloudflare D1·Worker와 Google Cloud 프로젝트·Drive API·API key를 생성합니다. `terraform.tfvars`에는 Cloudflare API token이 포함되므로 Git에 커밋하지 않습니다.
@@ -196,7 +206,7 @@ terraform -chdir=terraform fmt -check
 terraform -chdir=terraform validate
 ```
 
-`bun run quality`는 Biome 린트, ESLint/Svelte 린트, Svelte 타입체커, Knip 데드코드 검사, Vitest를 한 번에 실행합니다. 포맷은 기존 Svelte 지원이 필요한 Prettier를 사용하고, Biome은 TypeScript/JavaScript/JSON 계열의 린트와 import·미사용 코드 검사를 담당합니다. Knip에 새 진입점이나 동적 로딩이 추가되면 `knip.json`의 `entry`를 함께 갱신합니다.
+`bun run quality`는 Prettier 포맷 검사, Biome 린트, ESLint/Svelte 린트, Svelte 타입체커, Knip 데드코드 검사, Vitest를 순서대로 실행합니다. 각 단계가 실패하면 즉시 종료하며, ESLint는 warning도 허용하지 않습니다. 포맷은 기존 Svelte 지원이 필요한 Prettier를 사용하고, Biome은 TypeScript/JavaScript/JSON 계열의 린트와 import·미사용 코드 검사를 담당합니다. Knip에 새 진입점이나 동적 로딩이 추가되면 `knip.json`의 `entry`를 함께 갱신합니다.
 
 실제 배포 검증에서는 관리자 OAuth 로그인/Drive 연결, 외부 브라우저의 ID·비밀번호·패스키 등록, 비밀번호 변경 요청·링크 사용, 파일 업로드·재시도·다운로드·이름 변경·삭제·복구를 순서대로 확인해야 합니다.
 

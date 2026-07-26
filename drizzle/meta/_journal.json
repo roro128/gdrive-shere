@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1785066153100,
+      "tag": "0000_better_auth_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785068224538,
+      "tag": "0001_stormy_green_goblin",
+      "breakpoints": true
+    }
+  ]
+}

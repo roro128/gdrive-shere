@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gdrive-share",
+  "main": ".svelte-kit/cloudflare/_worker.js",
+  "compatibility_date": "2026-07-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["0 18 * * *"]
+  },
+  "vars": {
+    "APP_ORIGIN": "https://gdrive-share.codo.workers.dev",
+    "RP_ID": "gdrive-share.codo.workers.dev"
+  },
+  "assets": {
+    "directory": ".svelte-kit/cloudflare",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/setup", "/invite/*", "/reset/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gdrive-share",
+      "database_id": "c9e16c60-5a11-4411-914e-58892131b66e"
+    }
+  ]
+}

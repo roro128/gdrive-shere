@@ -3,13 +3,9 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { authClient } from '$lib/client';
   import Badge from '$lib/components/ui/Badge.svelte';
+  import UserPreview from '$lib/components/ui/UserPreview.svelte';
   import { animateElement } from '$lib/dom-animation';
-  import {
-    createInternalDragPayload,
-    INTERNAL_FILE_DRAG_TYPE,
-    moveFiles,
-    readInternalDragIds
-  } from '$lib/file-move';
+  import { createInternalDragPayload, moveFiles } from '$lib/file-move';
 
   type FileItem = {
     id: string;
@@ -25,6 +21,9 @@
     uploadedBy?: string;
     uploadedAt?: string;
     permission?: 'owner' | 'viewer' | 'editor';
+    sharedByMe?: boolean;
+    sharedWithCount?: number;
+    sharedWithNames?: string[];
   };
   type UploadItem = {
     id: string;
@@ -63,6 +62,7 @@
     displayName: string;
     handle: string | null;
     loginId: string | null;
+    avatarUrl?: string | null;
   };
   type ShareInvitation = {
     id: string;
@@ -73,9 +73,19 @@
   type ContextMenu = { file: FileItem; x: number; y: number };
   type StorageQuota = { limit: number | null; usage: number; available: boolean };
   type CachedFileList = { files: FileItem[]; cachedAt: number };
+  type PointerFileDrag = {
+    pointerId: number;
+    file: FileItem;
+    source: HTMLElement | null;
+    startX: number;
+    startY: number;
+    active: boolean;
+    targetParentId: string | null;
+  };
 
   const FILE_LIST_CACHE_TTL_MS = 15_000;
   const SEARCH_DEBOUNCE_MS = 350;
+  const POINTER_DRAG_THRESHOLD_PX = 6;
 
   let { user, googleConnected } = $props<{ user: User; googleConnected: boolean }>();
   let files = $state<FileItem[]>([]);
@@ -90,6 +100,8 @@
   let dropTargetFolder = $state<FileItem | null>(null);
   let draggingFiles = $state<FileItem[]>([]);
   let moveDropTarget = $state<string | null | undefined>(undefined);
+  let pointerFileDrag = $state<PointerFileDrag | null>(null);
+  let suppressFileClick = $state(false);
   let message = $state('');
   let uploads = $state<UploadItem[]>([]);
   let showUploadTray = $state(true);
@@ -97,6 +109,7 @@
   let applyConflictAction = $state<ConflictAction | null>(null);
   let showTrash = $state(false);
   let showShared = $state(false);
+  let showRequests = $state(false);
   let currentFolderName = $state('');
   let folderPath = $state<FileItem[]>([]);
   let spaceRootId = $state<string | null>(null);
@@ -131,6 +144,9 @@
   let sharedUserIds = new SvelteSet<string>();
   let sharePermissions = new SvelteMap<string, 'viewer' | 'editor'>();
   let shareQuery = $state('');
+  let shareSearchLoading = $state(false);
+  let shareSearchError = $state('');
+  let shareSearchGeneration = 0;
   let pendingShareInvitations = $state<ShareInvitation[]>([]);
   let respondingInvitation = $state<string | null>(null);
   let savingShares = $state(false);
@@ -155,17 +171,20 @@
   let folderTitle = $derived(
     showTrash
       ? '휴지통'
-      : currentFolderId
-        ? currentFolderName || '폴더'
-        : isAdmin
-          ? '사용자 파일 관리'
-          : showShared
-            ? '공유 폴더'
-            : '내 공간'
+      : showRequests
+        ? '공유 요청'
+        : currentFolderId
+          ? currentFolderName || '폴더'
+          : isAdmin
+            ? '사용자 파일 관리'
+            : showShared
+              ? '공유 폴더'
+              : '내 공간'
   );
   let canUploadCurrent = $derived(
     !isAdmin &&
       !showTrash &&
+      !showRequests &&
       (!showShared || (Boolean(currentFolderId) && folderPath.at(-1)?.permission !== 'viewer'))
   );
   let canCreateFolderCurrent = $derived(canUploadCurrent);
@@ -225,6 +244,9 @@
       if (event.clipboardData?.files.length) void uploadFiles(event.clipboardData.files);
     };
     window.addEventListener('paste', onPaste);
+    window.addEventListener('pointermove', handleFilePointerMove);
+    window.addEventListener('pointerup', handleFilePointerUp);
+    window.addEventListener('pointercancel', handleFilePointerCancel);
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
       if (!activeUploads.length) return;
       event.preventDefault();
@@ -235,6 +257,9 @@
       fileListRequestController?.abort();
       if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
       window.removeEventListener('paste', onPaste);
+      window.removeEventListener('pointermove', handleFilePointerMove);
+      window.removeEventListener('pointerup', handleFilePointerUp);
+      window.removeEventListener('pointercancel', handleFilePointerCancel);
       window.removeEventListener('beforeunload', warnBeforeLeaving);
     };
   });
@@ -254,29 +279,114 @@
     return Array.from(event.dataTransfer?.types ?? []).includes('Files');
   }
 
-  function isInternalFileDrag(event: DragEvent): boolean {
-    return Boolean(
-      draggingFiles.length ||
-      Array.from(event.dataTransfer?.types ?? []).includes(INTERNAL_FILE_DRAG_TYPE)
-    );
+  function isInternalFileDrag(): boolean {
+    return draggingFiles.length > 0;
   }
 
-  function draggedFilesFromEvent(event: DragEvent): FileItem[] {
-    if (draggingFiles.length) return draggingFiles;
-    const ids = readInternalDragIds(event.dataTransfer);
-    return files.filter((file) => ids.includes(file.id));
+  function draggedFilesFromEvent(): FileItem[] {
+    return draggingFiles;
   }
 
-  function startFileDrag(event: DragEvent, file: FileItem) {
-    if (showTrash || file.isAdminSpace || !googleConnected) return;
+  function beginFilePointerDrag(event: PointerEvent, file: FileItem) {
+    const source = event.target as HTMLElement | null;
+    if (
+      event.button !== 0 ||
+      source?.closest('input, .row-actions') ||
+      showTrash ||
+      file.isAdminSpace ||
+      !googleConnected
+    )
+      return;
+    pointerFileDrag = {
+      pointerId: event.pointerId,
+      file,
+      source: event.currentTarget as HTMLElement | null,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      targetParentId: null
+    };
+    const row = event.currentTarget as HTMLElement | null;
+    row?.setPointerCapture?.(event.pointerId);
+  }
+
+  function startNativeFileDrag(event: DragEvent, file: FileItem) {
+    if (showTrash || file.isAdminSpace || !googleConnected) {
+      event.preventDefault();
+      return;
+    }
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) return;
-    dataTransfer.effectAllowed = 'move';
     const filesToMove = selected.has(file.id) ? selectedFiles : [file];
-    createInternalDragPayload(dataTransfer, filesToMove);
-    dataTransfer.setData('text/plain', file.name);
+    pointerFileDrag = null;
     draggingFiles = filesToMove;
     moveDropTarget = undefined;
+    dataTransfer.effectAllowed = 'move';
+    createInternalDragPayload(dataTransfer, filesToMove);
+    dataTransfer.setData('text/plain', file.name);
+  }
+
+  function pointerDropTargetAt(clientX: number, clientY: number): string | null {
+    const element = document.elementFromPoint(clientX, clientY);
+    const target = element?.closest<HTMLElement>('[data-folder-drop-id], [data-parent-drop-id]');
+    return target?.dataset.folderDropId ?? target?.dataset.parentDropId ?? null;
+  }
+
+  function handleFilePointerMove(event: PointerEvent) {
+    const drag = pointerFileDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.active && distance < POINTER_DRAG_THRESHOLD_PX) return;
+    if (!drag.active) {
+      const filesToMove = selected.has(drag.file.id) ? selectedFiles : [drag.file];
+      pointerFileDrag = { ...drag, active: true };
+      draggingFiles = filesToMove;
+      moveDropTarget = undefined;
+    }
+    event.preventDefault();
+    const targetParentId = pointerDropTargetAt(event.clientX, event.clientY);
+    pointerFileDrag = { ...pointerFileDrag!, targetParentId };
+    moveDropTarget = targetParentId ?? undefined;
+  }
+
+  function handleFilePointerUp(event: PointerEvent) {
+    const drag = pointerFileDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    pointerFileDrag = null;
+    if (!drag.active) return;
+    event.preventDefault();
+    suppressFileClick = true;
+    window.setTimeout(() => (suppressFileClick = false), 0);
+    const filesToMove = draggingFiles;
+    const hitTarget = pointerDropTargetAt(event.clientX, event.clientY);
+    const targetParentId =
+      hitTarget && !filesToMove.some((file) => file.id === hitTarget)
+        ? hitTarget
+        : drag.targetParentId;
+    if (drag.source?.hasPointerCapture?.(event.pointerId))
+      drag.source.releasePointerCapture(event.pointerId);
+    clearFileDrag();
+    if (filesToMove.length && targetParentId) void moveFilesToFolder(filesToMove, targetParentId);
+  }
+
+  function handleFilePointerCancel(event: PointerEvent) {
+    if (pointerFileDrag?.pointerId !== event.pointerId) return;
+    if (pointerFileDrag.source?.hasPointerCapture?.(event.pointerId))
+      pointerFileDrag.source.releasePointerCapture(event.pointerId);
+    pointerFileDrag = null;
+    clearFileDrag();
+  }
+
+  function consumeSuppressedFileClick(): boolean {
+    if (!suppressFileClick) return false;
+    suppressFileClick = false;
+    return true;
+  }
+
+  function openFileFromMain(file: FileItem) {
+    if (consumeSuppressedFileClick()) return;
+    if (isFolder(file)) openFolder(file);
+    else openPreview(file);
   }
 
   function clearFileDrag() {
@@ -285,7 +395,7 @@
   }
 
   function handleMoveDragOver(event: DragEvent, targetParentId: string | null) {
-    const filesToMove = draggedFilesFromEvent(event);
+    const filesToMove = draggedFilesFromEvent();
     if (!filesToMove.length || filesToMove.some((file) => file.id === targetParentId)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -294,11 +404,7 @@
     const target = event.currentTarget as HTMLElement | null;
     if (target && target.dataset.moveMotion !== 'running') {
       target.dataset.moveMotion = 'running';
-      animateElement(
-        target,
-        { scale: [1, 1.015, 1] },
-        { duration: 0.26, ease: 'easeOut' }
-      );
+      animateElement(target, { scale: [1, 1.015, 1] }, { duration: 0.26, ease: 'easeOut' });
       window.setTimeout(() => delete target.dataset.moveMotion, 280);
     }
   }
@@ -311,12 +417,16 @@
   }
 
   async function handleMoveDrop(event: DragEvent, targetParentId: string | null) {
-    const filesToMove = draggedFilesFromEvent(event);
+    const filesToMove = draggedFilesFromEvent();
     if (!filesToMove.length) return;
     event.preventDefault();
     event.stopPropagation();
     clearFileDrag();
     if (!targetParentId) return;
+    await moveFilesToFolder(filesToMove, targetParentId);
+  }
+
+  async function moveFilesToFolder(filesToMove: FileItem[], targetParentId: string) {
     const result = await moveFiles(filesToMove, targetParentId, (fileId, parentId) =>
       fetch(`/api/files/${fileId}`, {
         method: 'PATCH',
@@ -345,14 +455,14 @@
   }
 
   function handleDragEnter(event: DragEvent) {
-    if (!canUploadCurrent || isInternalFileDrag(event) || !isFileDrag(event)) return;
+    if (!canUploadCurrent || isInternalFileDrag() || !isFileDrag(event)) return;
     event.preventDefault();
     dragDepth += 1;
     dragging = true;
   }
 
   function handleDragOver(event: DragEvent) {
-    if (!canUploadCurrent || isInternalFileDrag(event) || !isFileDrag(event)) return;
+    if (!canUploadCurrent || isInternalFileDrag() || !isFileDrag(event)) return;
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) return;
     event.preventDefault();
@@ -361,7 +471,7 @@
   }
 
   function handleDragLeave(event: DragEvent) {
-    if (!canUploadCurrent || isInternalFileDrag(event) || !isFileDrag(event)) return;
+    if (!canUploadCurrent || isInternalFileDrag() || !isFileDrag(event)) return;
     event.preventDefault();
     dragDepth = Math.max(0, dragDepth - 1);
     if (!dragDepth) {
@@ -371,7 +481,7 @@
   }
 
   function handleFolderDragEnter(event: DragEvent, folder: FileItem) {
-    if (!canUploadCurrent || isInternalFileDrag(event) || !isFolder(folder) || !isFileDrag(event))
+    if (!canUploadCurrent || isInternalFileDrag() || !isFolder(folder) || !isFileDrag(event))
       return;
     event.preventDefault();
     dropTargetFolder = folder;
@@ -379,7 +489,7 @@
   }
 
   function handleFolderDragOver(event: DragEvent, folder: FileItem) {
-    if (!canUploadCurrent || isInternalFileDrag(event) || !isFolder(folder) || !isFileDrag(event))
+    if (!canUploadCurrent || isInternalFileDrag() || !isFolder(folder) || !isFileDrag(event))
       return;
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) return;
@@ -396,7 +506,7 @@
   }
 
   function handleDrop(event: DragEvent) {
-    if (!canUploadCurrent || isInternalFileDrag(event) || !isFileDrag(event)) return;
+    if (!canUploadCurrent || isInternalFileDrag() || !isFileDrag(event)) return;
     event.preventDefault();
     const parentId = dropTargetFolder?.id ?? currentFolderId;
     dragDepth = 0;
@@ -566,6 +676,7 @@
   function openFolder(file: FileItem) {
     if (!isFolder(file)) return;
     showTrash = false;
+    showRequests = false;
     currentFolderName = file.name;
     if (!folderPath.length) spaceRootId = file.parents?.[0] ?? null;
     folderPath = [...folderPath, file];
@@ -585,6 +696,7 @@
   function backToRoot() {
     showTrash = false;
     showShared = false;
+    showRequests = false;
     currentFolderId = null;
     currentFolderName = '';
     folderPath = [];
@@ -595,6 +707,7 @@
   function openTrash() {
     showTrash = true;
     showShared = false;
+    showRequests = false;
     currentFolderId = null;
     folderPath = [];
     spaceRootId = null;
@@ -606,6 +719,7 @@
   function openShared() {
     showTrash = false;
     showShared = true;
+    showRequests = false;
     currentFolderId = null;
     currentFolderName = '';
     folderPath = [];
@@ -613,6 +727,20 @@
     search = '';
     selected.clear();
     void loadFiles();
+  }
+
+  function openRequests() {
+    showTrash = false;
+    showShared = false;
+    showRequests = true;
+    currentFolderId = null;
+    currentFolderName = '';
+    folderPath = [];
+    spaceRootId = null;
+    search = '';
+    selected.clear();
+    files = [];
+    void loadShareInvitations();
   }
 
   async function createFolder() {
@@ -1084,8 +1212,21 @@
   }
 
   async function searchShareUsers() {
-    const response = await fetch(`/api/share-users?q=${encodeURIComponent(shareQuery)}`);
-    if (response.ok) shareUsers = ((await response.json()) as { users: ShareUser[] }).users;
+    const generation = ++shareSearchGeneration;
+    shareSearchLoading = true;
+    shareSearchError = '';
+    try {
+      const response = await fetch(`/api/share-users?q=${encodeURIComponent(shareQuery.trim())}`);
+      if (!response.ok) throw new Error('사용자 목록을 불러오지 못했습니다.');
+      const result = (await response.json()) as { users: ShareUser[] };
+      if (generation === shareSearchGeneration) shareUsers = result.users;
+    } catch (cause) {
+      if (generation === shareSearchGeneration)
+        shareSearchError =
+          cause instanceof Error ? cause.message : '사용자 목록을 불러오지 못했습니다.';
+    } finally {
+      if (generation === shareSearchGeneration) shareSearchLoading = false;
+    }
   }
 
   function setSharePermission(userId: string, permission: 'viewer' | 'editor') {
@@ -1275,6 +1416,11 @@
             class="nav-count">{pendingShareInvitations.length}</span
           >{/if}</button
       >{/if}
+    {#if !isAdmin}<button class:active={showRequests} class="nav-item" onclick={openRequests}
+        ><span class="nav-glyph">◌</span>공유 요청{#if pendingShareInvitations.length}<span
+            class="nav-count">{pendingShareInvitations.length}</span
+          >{/if}</button
+      >{/if}
     <button class:active={showTrash} class="nav-item" onclick={openTrash}
       ><span class="nav-glyph">⌁</span>휴지통</button
     >
@@ -1293,6 +1439,12 @@
           <button class="connect-button" onclick={connectGoogle}>Google Drive 연결</button>
         {/if}
       {/if}
+      {#if !isAdmin && pendingShareInvitations.length}<button
+          class="profile-notice"
+          onclick={openRequests}
+        >
+          <span class="notice-pulse"></span>공유 요청 {pendingShareInvitations.length}건
+        </button>{/if}
       <button class="profile" aria-label="내 정보 열기" onclick={() => void openProfile()}>
         {#if user.avatarUrl}<img
             class="avatar avatar-image"
@@ -1325,7 +1477,9 @@
               ? '사용자별 공간을 열어 파일을 확인하고 정리할 수 있습니다.'
               : showShared
                 ? '내게 공유된 폴더와 파일입니다.'
-                : '내 파일은 이 공간에만 안전하게 정리됩니다.'}
+                : showRequests
+                  ? '나에게 도착한 공유 요청을 확인하고 처리합니다.'
+                  : '내 파일은 이 공간에만 안전하게 정리됩니다.'}
         </p>
       </div>
       <div class="top-actions">
@@ -1380,21 +1534,36 @@
       <div class="breadcrumbs">
         <button
           class:current={!currentFolderId}
+          data-parent-drop-id={spaceRootId ?? undefined}
           class:parent-drop-zone={draggingFiles.length > 0 && spaceRootId !== null}
           class:move-drop-target={moveDropTarget === spaceRootId && spaceRootId !== null}
           ondragover={(event) => spaceRootId && handleMoveDragOver(event, spaceRootId)}
           ondragleave={(event) => spaceRootId && handleMoveDragLeave(event, spaceRootId)}
           ondrop={(event) => spaceRootId && void handleMoveDrop(event, spaceRootId)}
-          onclick={() => (showShared ? openShared() : backToRoot())}
-          >{isAdmin ? '사용자 파일' : showShared ? '공유 폴더' : '내 공간'}</button
+          onclick={() => {
+            if (consumeSuppressedFileClick()) return;
+            if (showShared) openShared();
+            else backToRoot();
+          }}
+          >{isAdmin
+            ? '사용자 파일'
+            : showRequests
+              ? '공유 요청'
+              : showShared
+                ? '공유 폴더'
+                : '내 공간'}</button
         >{#each folderPath as folder, index (folder.id)}<span>/</span><button
             class="parent-drop-zone"
+            data-parent-drop-id={folder.id}
             class:current={index === folderPath.length - 1}
             class:move-drop-target={moveDropTarget === folder.id}
             ondragover={(event) => handleMoveDragOver(event, folder.id)}
             ondragleave={(event) => handleMoveDragLeave(event, folder.id)}
             ondrop={(event) => void handleMoveDrop(event, folder.id)}
-            onclick={() => openFolderPath(index)}
+            onclick={() => {
+              if (consumeSuppressedFileClick()) return;
+              openFolderPath(index);
+            }}
             title={`${folder.name} 폴더로 이동`}>{folder.name}</button
           >{/each}
       </div>
@@ -1462,7 +1631,7 @@
         휴지통의 파일은 삭제한 시점부터 7일 후 자동으로 영구 삭제됩니다.
       </p>
     {/if}
-    {#if !isAdmin && pendingShareInvitations.length}
+    {#if !isAdmin && pendingShareInvitations.length && (showRequests || !showShared)}
       <section class="share-invitation-banner" aria-label="공유 폴더 신청">
         <div>
           <strong>공유 폴더 신청이 도착했습니다.</strong><small
@@ -1516,9 +1685,11 @@
                 ? '아직 파일 공간을 만든 사용자가 없습니다.'
                 : showShared && !currentFolderId
                   ? '공유받은 폴더가 없습니다.'
-                  : googleConnected
-                    ? '아직 파일이 없습니다.'
-                    : 'Drive 연결을 기다리는 중입니다.'}</strong
+                  : showRequests
+                    ? '새 공유 요청이 없습니다.'
+                    : googleConnected
+                      ? '아직 파일이 없습니다.'
+                      : 'Drive 연결을 기다리는 중입니다.'}</strong
           ><small
             >{showTrash
               ? '삭제한 항목은 여기에서 복구할 수 있어요.'
@@ -1526,7 +1697,9 @@
                 ? '사용자가 처음 파일을 올리면 개인 공간이 여기에 나타납니다.'
                 : showShared && !currentFolderId
                   ? '다른 사용자가 폴더를 공유하면 여기에 표시됩니다.'
-                  : '첫 파일을 이곳에 놓아보세요.'}</small
+                  : showRequests
+                    ? '새 요청이 도착하면 이곳에서 수락하거나 거절할 수 있습니다.'
+                    : '첫 파일을 이곳에 놓아보세요.'}</small
           >
         </div>
       {:else}
@@ -1536,13 +1709,18 @@
         {#each visibleFiles as file (file.id)}
           <div
             class="file-row"
+            data-folder-drop-id={isFolder(file) ? file.id : undefined}
             data-file-id={file.id}
             class:selected={selected.has(file.id)}
+            class:shared-by-me={file.sharedByMe}
             class:dragging-source={draggingFiles.some((item) => item.id === file.id)}
             class:folder-drop-target={dropTargetFolder?.id === file.id}
             class:move-drop-target={moveDropTarget === file.id}
             role="group"
             oncontextmenu={(event) => openContextMenu(event, file)}
+            draggable={!showTrash && !file.isAdminSpace && googleConnected}
+            onpointerdown={(event) => beginFilePointerDrag(event, file)}
+            ondragstart={(event) => startNativeFileDrag(event, file)}
             ondragend={clearFileDrag}
             ondragenter={(event) => {
               handleFolderDragEnter(event, file);
@@ -1554,7 +1732,7 @@
             }}
             ondragleave={(event) => {
               handleFolderDragLeave(event, file);
-              if (isInternalFileDrag(event) && isFolder(file)) handleMoveDragLeave(event, file.id);
+              if (isInternalFileDrag() && isFolder(file)) handleMoveDragLeave(event, file.id);
             }}
             ondrop={(event) => {
               if (isFolder(file)) void handleMoveDrop(event, file.id);
@@ -1563,8 +1741,6 @@
             <div class="file-name">
               <span
                 class="drag-handle"
-                draggable={!file.isAdminSpace && !showTrash && googleConnected}
-                ondragstart={(event) => startFileDrag(event, file)}
                 ondragend={clearFileDrag}
                 aria-hidden="true"
                 title="이동할 파일 끌기">⠿</span
@@ -1577,9 +1753,16 @@
                 aria-label={file.isAdminSpace ? `${file.name} 개인 공간` : `${file.name} 선택`}
               /><button
                 class="file-main"
-                onclick={() => (isFolder(file) ? openFolder(file) : openPreview(file))}
+                onclick={() => openFileFromMain(file)}
                 onkeydown={(event) => openKeyboardContextMenu(event, file)}
-                ><span
+                ondragover={(event) => {
+                  if (isFolder(file)) handleMoveDragOver(event, file.id);
+                }}
+                ondrop={(event) => {
+                  if (isFolder(file)) void handleMoveDrop(event, file.id);
+                }}
+                >{#if file.sharedByMe}<span class="shared-lock" title="공유 중인 폴더">공유 중</span
+                  >{/if}<span
                   class="file-icon"
                   class:folder={isFolder(file)}
                   class:image={isImage(file)}
@@ -1608,6 +1791,13 @@
                           : file.uploadedBy
                             ? `${file.uploadedBy} · ${file.uploadedAt ? new Date(file.uploadedAt).toLocaleString('ko-KR') : '업로드'}`
                             : file.mimeType.split('/').pop()}</small
+                    >{/if}{#if file.sharedByMe}<em class="shared-with"
+                      >{file.sharedWithCount}명과 공유 · {file.sharedWithNames?.join(
+                        ', '
+                      )}{file.sharedWithCount &&
+                      file.sharedWithCount > (file.sharedWithNames?.length ?? 0)
+                        ? ' 외'
+                        : ''}</em
                     >{/if}</span
                 ></button
               >
@@ -1627,7 +1817,12 @@
                   >{/if}{#if file.permission !== 'viewer'}<button onclick={() => beginRename(file)}
                     >이름 변경</button
                   >{#if !isFolder(file)}<button onclick={() => download(file)}>다운로드</button
-                    >{/if}<button class="danger-button" onclick={() => trash(file)}>삭제</button
+                    >{/if}{#if !file.sharedByMe}<button
+                      class="danger-button"
+                      onclick={() => trash(file)}>삭제</button
+                    >{:else}<span class="locked-action" title="공유를 해제한 뒤 삭제할 수 있습니다."
+                      >공유 해제 후 삭제</span
+                    >{/if}
                   >{:else if !isFolder(file)}<button onclick={() => download(file)}>다운로드</button
                   >{/if}{/if}
               {#if !file.isAdminSpace}
@@ -1721,15 +1916,15 @@
         >
       {/if}
       <div class="context-rule"></div>
-      <button
-        class="context-danger"
-        role="menuitem"
-        onclick={() => {
-          const file = contextMenu?.file;
-          closeContextMenu();
-          if (file) void trash(file);
-        }}>⌁ 휴지통으로 이동</button
-      >
+      {#if !contextMenu.file.sharedByMe}<button
+          class="context-danger"
+          role="menuitem"
+          onclick={() => {
+            const file = contextMenu?.file;
+            closeContextMenu();
+            if (file) void trash(file);
+          }}>⌁ 휴지통으로 이동</button
+        >{:else}<span class="context-locked">공유 해제 후 삭제할 수 있습니다.</span>{/if}
     {/if}
   </div>
 {/if}
@@ -2122,22 +2317,26 @@
         사용자를 검색해 신청을 보내세요. 상대가 수락하기 전까지는 폴더가 공개되지 않습니다.
       </p>
       <label class="form-field share-search"
-        ><span>사용자 검색 · @핸들네임</span><input
+        ><span>사용자 검색 · 이름 또는 @핸들네임</span><input
           bind:value={shareQuery}
           oninput={() => void searchShareUsers()}
-          placeholder="@handle 또는 이름"
+          placeholder="이름, 로그인 ID 또는 @handle"
         /></label
       >
       <div class="share-list">
-        {#if !shareUsers.length}<p class="empty-modal">공유할 활성 사용자가 없습니다.</p>{/if}
+        {#if shareSearchLoading}<p class="share-list-status">사용자 목록을 찾는 중…</p>
+        {:else if shareSearchError}<p class="empty-modal">{shareSearchError}</p>
+        {:else if !shareUsers.length}<p class="empty-modal">
+            일치하는 활성 사용자가 없습니다.
+          </p>{/if}
         {#each shareUsers as person (person.id)}
           <label class="share-person">
-            <span class="avatar small-avatar">{person.displayName.slice(0, 1)}</span>
-            <span
-              ><strong>{person.displayName}</strong><small
-                >@{person.handle ?? person.loginId ?? 'member'}</small
-              ></span
-            >
+            <UserPreview
+              displayName={person.displayName}
+              handle={person.handle}
+              loginId={person.loginId}
+              avatarUrl={person.avatarUrl}
+            />
             <input
               type="checkbox"
               checked={sharedUserIds.has(person.id)}
@@ -2153,7 +2352,7 @@
                   )}
                 ><option value="viewer">읽기 전용</option><option value="editor">편집 가능</option
                 ></select
-              >{/if}
+              >{:else}<small class="share-select-hint">선택하여 공유</small>{/if}
           </label>
         {/each}
       </div>
@@ -2356,6 +2555,36 @@
     font:
       0.7rem 'DM Mono',
       monospace;
+  }
+  .profile-notice {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 4px 4px;
+    border: 1px solid #795035;
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: var(--copper-bright);
+    background: #261a12;
+    font-size: 0.68rem;
+    animation: notice-rise 0.35s ease-out;
+  }
+  .notice-pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--copper-bright);
+    box-shadow: 0 0 0 4px #d99b5f22;
+  }
+  @keyframes notice-rise {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
   .sidebar-rule {
     height: 1px;
@@ -2979,6 +3208,38 @@
   .file-row.selected {
     background: linear-gradient(90deg, #272018, #191e24);
   }
+  .file-row.shared-by-me {
+    background: linear-gradient(90deg, #2a2118, transparent 62%);
+    box-shadow: inset 3px 0 0 var(--copper);
+  }
+  .shared-lock {
+    display: inline-block;
+    margin: 0 0 5px;
+    color: var(--copper-bright);
+    font:
+      0.58rem 'DM Mono',
+      monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .shared-with {
+    display: block;
+    margin-top: 4px;
+    color: var(--copper-bright);
+    font:
+      normal 0.6rem 'DM Mono',
+      monospace;
+  }
+  .locked-action,
+  .context-locked {
+    color: #c88d58;
+    font-size: 0.62rem;
+    white-space: nowrap;
+  }
+  .context-locked {
+    display: block;
+    padding: 8px 11px;
+  }
   .file-row.folder-drop-target {
     position: relative;
     z-index: 1;
@@ -2998,10 +3259,14 @@
     animation: folder-drop-pulse 0.9s ease-in-out infinite;
     box-shadow: 0 0 0 5px #d8893f1c;
   }
-  .drag-handle[draggable='true'] {
+  .file-row[data-file-id] {
     cursor: grab;
+    touch-action: none;
   }
-  .drag-handle[draggable='true']:active {
+  .app-shell.moving-file {
+    user-select: none;
+  }
+  .file-row[data-file-id]:active {
     cursor: grabbing;
   }
   .file-row.dragging-source {
@@ -3043,7 +3308,7 @@
     cursor: grab;
     font-size: 1rem;
     line-height: 1;
-    pointer-events: none;
+    user-select: none;
   }
   .file-name input {
     width: 14px;
@@ -3839,7 +4104,7 @@
   }
   .share-person {
     display: grid;
-    grid-template-columns: 30px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 11px;
     padding: 12px 2px;
@@ -3852,24 +4117,15 @@
   .share-person:first-child {
     border-top: 0;
   }
-  .share-person strong,
-  .share-person small {
-    display: block;
-  }
-  .share-person strong {
-    font-size: 0.78rem;
-  }
-  .share-person small {
-    margin-top: 3px;
-    color: var(--dim);
-    font:
-      0.64rem 'DM Mono',
-      monospace;
-  }
   .share-person input {
     width: 16px;
     height: 16px;
     accent-color: var(--copper);
+  }
+  .share-select-hint {
+    color: var(--dim);
+    font-size: 0.62rem;
+    white-space: nowrap;
   }
   .empty-modal {
     color: var(--muted);
