@@ -71,8 +71,6 @@ describe('moveFiles', () => {
     const result = await moveFiles(files, 'target-folder', patch);
 
     expect(result.moved).toEqual([files[0]]);
-    expect(result.failed).toEqual([
-      { file: files[1], message: '대상 폴더에 접근할 수 없습니다.' }
-    ]);
+    expect(result.failed).toEqual([{ file: files[1], message: '대상 폴더에 접근할 수 없습니다.' }]);
   });
 });
