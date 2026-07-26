@@ -1,29 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const motionAnimate = vi.fn();
+vi.mock('motion', () => ({ animate: motionAnimate }));
+
 import { animateElement } from './dom-animation';
 
 describe('animateElement', () => {
-  it('uses the browser animation API without assigning array values to CSSStyleDeclaration', () => {
-    const animate = vi.fn();
-    const element = { animate } as unknown as HTMLElement;
-    const keyframes: Keyframe[] = [
-      { opacity: 0, transform: 'translateY(10px)' },
-      { opacity: 1, transform: 'translateY(0)' }
-    ];
+  it('delegates property keyframes to motion with second-based timing', () => {
+    const element = {} as HTMLElement;
+    const keyframes = {
+      opacity: [0, 1],
+      transform: ['translateY(10px)', 'translateY(0)']
+    };
 
-    animateElement(element, keyframes, { duration: 380, easing: 'ease-out' });
+    animateElement(element, keyframes, { duration: 0.38, ease: 'easeOut' });
 
-    expect(animate).toHaveBeenCalledWith(keyframes, {
-      duration: 380,
-      easing: 'ease-out',
-      fill: 'both'
+    expect(motionAnimate).toHaveBeenCalledWith(element, keyframes, {
+      duration: 0.38,
+      ease: 'easeOut'
     });
   });
 
-  it('does not break the interaction when animations are unavailable', () => {
-    const element = {} as HTMLElement;
+  it('does not break the interaction when Motion rejects an animation', () => {
+    motionAnimate.mockImplementationOnce(() => {
+      throw new Error('animation unavailable');
+    });
 
-    expect(() =>
-      animateElement(element, [{ transform: 'scale(1)' }], { duration: 260 })
-    ).not.toThrow();
+    expect(
+      animateElement({} as HTMLElement, { scale: [1, 1.015, 1] }, { duration: 0.26 })
+    ).toBeNull();
   });
 });
