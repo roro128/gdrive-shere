@@ -1,21 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  import { animate } from 'motion';
   import { authClient } from '$lib/client';
   import Badge from '$lib/components/ui/Badge.svelte';
+  import { animateElement } from '$lib/dom-animation';
   import {
     createInternalDragPayload,
     INTERNAL_FILE_DRAG_TYPE,
     moveFiles,
     readInternalDragIds
   } from '$lib/file-move';
-
-  const motionAnimate = animate as unknown as (
-    element: Element,
-    keyframes: unknown,
-    options: unknown
-  ) => unknown;
 
   type FileItem = {
     id: string;
@@ -215,19 +209,14 @@
 
   onMount(() => {
     const shell = document.querySelector<HTMLElement>('.app-shell');
-    const runAnimation = animate as unknown as (
-      element: Element,
-      keyframes: unknown,
-      options: unknown
-    ) => unknown;
     if (shell)
-      void runAnimation(
+      animateElement(
         shell,
         [
           { opacity: 0, transform: 'translateY(10px)' },
           { opacity: 1, transform: 'translateY(0)' }
         ],
-        { duration: 0.38, easing: 'ease-out' }
+        { duration: 380, easing: 'ease-out' }
       );
     void loadFiles();
     void loadShareInvitations();
@@ -305,7 +294,11 @@
     const target = event.currentTarget as HTMLElement | null;
     if (target && target.dataset.moveMotion !== 'running') {
       target.dataset.moveMotion = 'running';
-      void motionAnimate(target, { scale: [1, 1.015, 1] }, { duration: 0.26, easing: 'ease-out' });
+      animateElement(
+        target,
+        [{ transform: 'scale(1)' }, { transform: 'scale(1.015)' }, { transform: 'scale(1)' }],
+        { duration: 260, easing: 'ease-out' }
+      );
       window.setTimeout(() => delete target.dataset.moveMotion, 280);
     }
   }

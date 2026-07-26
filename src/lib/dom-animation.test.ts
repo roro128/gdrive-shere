@@ -22,6 +22,8 @@ describe('animateElement', () => {
   it('does not break the interaction when animations are unavailable', () => {
     const element = {} as HTMLElement;
 
-    expect(() => animateElement(element, [{ transform: 'scale(1)' }], { duration: 260 })).not.toThrow();
+    expect(() =>
+      animateElement(element, [{ transform: 'scale(1)' }], { duration: 260 })
+    ).not.toThrow();
   });
 });
