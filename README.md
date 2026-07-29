@@ -1,7 +1,7 @@
 # GShare
 
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)
-![SvelteKit](https://img.shields.io/badge/SvelteKit-5-FF3E00?logo=svelte&logoColor=white)
+![React Router](https://img.shields.io/badge/React%20Router-8-CA4245?logo=react&logoColor=white)
 ![Terraform](https://img.shields.io/badge/Terraform-IaC-844FBA?logo=terraform&logoColor=white)
 ![License](https://img.shields.io/badge/status-MVP-black)
 
@@ -28,7 +28,7 @@ Google Drive를 저장소로 사용하며, 초대받은 사용자만 파일을 �
 - **멤버 관리**에서 계정 활성화·비활성화와 1시간짜리 일회성 비밀번호 변경 링크 발급 (분실 요청 처리도 지원)
 - 관리자 초대 링크 발급·사용자 목록 확인
 - Google Drive 전용 루트 폴더 자동 생성
-- 개인 공간 최상위 폴더 보호, 폴더 생성·탐색·검색·이름 변경·휴지통·복구
+- 개인 공간 최상위 폴더 보호, 폴더 생성·탐색·검색·이름 변경·휴지통·복구·영구 삭제
 - 같은 위치의 중복 폴더 생성을 클라이언트·서버에서 차단
 - 다중 파일 드래그앤드롭 업로드
 - 내부 파일·폴더를 목록의 폴더나 경로의 상위 폴더로 드래그 이동
@@ -41,7 +41,7 @@ Google Drive를 저장소로 사용하며, 초대받은 사용자만 파일을 �
 
 ```mermaid
 flowchart LR
-  Browser["SvelteKit UI"] --> Worker["Cloudflare Worker"]
+  Browser["React Router UI"] --> Worker["Cloudflare Worker"]
   Worker --> D1["Cloudflare D1\nusers / sessions / metadata"]
   Worker --> OAuth["Google OAuth\nrefresh token"]
   OAuth --> Drive["Google Drive\nGDrive Share folder"]
@@ -96,8 +96,41 @@ bun run test
 bun run build
 ```
 
+### 화면 기능 모킹 점검
+
+로그인과 Google Drive 연결 없이 React Router 화면의 핵심 흐름을 재현하려면 개발 서버를
+실행한 뒤 `?mock=1`을 붙입니다.
+
+```powershell
+bun run dev -- --host 127.0.0.1 --port 4192
+```
+
+`http://127.0.0.1:4192/?mock=1`에서 업로드, 파일 선택·정렬, 미리보기, 새 폴더 생성,
+이름 변경, 휴지통 이동·복구·영구 삭제, 하위 폴더 이동, breadcrumb을 통한 상위 폴더 이동을 확인할 수
+있습니다. 폴더의 `공유 관리`를 눌러 현재 공유 대상과 초대 대기 상태를 확인하고, 모킹 멤버를
+추가·제거하거나 권한을 저장한 뒤 `공유 폴더`에서
+공유 결과가 다시 나타나는 흐름도 확인할 수 있습니다. 모킹 데이터는 브라우저 메모리에만
+존재하며 실제 Drive나 D1에는 기록되지 않습니다.
+
+파일 행의 드래그 핸들(⠿)을 잡아 `하위 폴더 A` 위에 놓으면 파일이 이동합니다. 폴더 안에서는
+`저장 공간`으로 다시 끌어 루트 이동을 확인할 수 있으며, 체크박스·버튼·미리보기 영역에서
+시작한 포인터 동작은 파일 이동으로 처리하지 않습니다.
+
+권한별 화면은 `?mock=1&mockAccess=viewer` 또는 `?mock=1&mockAccess=editor`로 확인할 수
+있습니다. 읽기 전용에서는 업로드·폴더 생성·이름 변경·공유·삭제가 숨겨지고, 편집자에서는
+파일 변경은 가능하지만 폴더 공유 설정은 소유자 화면에서만 표시됩니다.
+
+관리자 화면은 `http://127.0.0.1:4192/?mock=1&mockRole=admin`에서 멤버 초대와 비밀번호 변경
+링크 생성, 각 사용자 공간 안 폴더의 `공유 관리`를 확인할 수 있습니다. 생성된 모킹 링크를 열면 초대·비밀번호 변경 화면도 `mock=1`
+상태로 이어져 이름·아이디·비밀번호 입력과 제출 결과까지 확인할 수 있습니다. 실제 초대·로그인
+화면은 API 계약을 사용하므로 `/invite/<token>`에서 계정 입력 검증, `/`에서 패스키 로그인과
+비밀번호 변경 요청 UI를 별도로 점검할 수 있습니다. 실제 초대 링크를 생성하려면 인증된 관리자
+API가 필요합니다.
+
+이전 점검의 변경 상태를 버리고 처음부터 다시 확인하려면 `?mock=1&mockReset=1`로 접속합니다.
+
 `bun install`은 Lefthook의 `pre-commit`·`pre-push` 훅도 설치합니다. 커밋 전에는
-포맷 검사, Biome·ESLint 린트, Svelte 타입 검사, Knip 데드코드 검사, Vitest를 순서대로
+포맷 검사, Biome·ESLint 린트, React Router 타입 생성·TypeScript 검사, Knip 데드코드 검사, Vitest를 순서대로
 실행하며, push 전에는 같은 전체 게이트를 다시 실행합니다. 훅을 수동으로 확인하려면
 다음 명령을 사용합니다.
 
@@ -153,7 +186,7 @@ bunx wrangler d1 migrations apply gdrive-share --remote
 bun run deploy
 ```
 
-Drizzle 스키마가 바뀌면 먼저 `bun run db:generate`로 `drizzle/` migration을 생성·검토합니다. Cloudflare 배포용 migration은 `migrations/`에 forward-only SQL로 반영한 뒤 `bunx wrangler d1 migrations apply gdrive-share --local`에서 검증하고 원격에 적용합니다. 현재 기준선은 Wrangler `0001`~`0004`입니다.
+Drizzle 스키마가 바뀌면 먼저 `bun run db:generate`로 `drizzle/` migration을 생성·검토합니다. Cloudflare 배포용 migration은 `migrations/`에 forward-only SQL로 반영한 뒤 `bunx wrangler d1 migrations apply gdrive-share --local`에서 검증하고 원격에 적용합니다. 현재 기준선은 Wrangler `0001`~`0008`입니다.
 
 배포 후 bootstrap 스크립트에 허용할 관리자 Google 이메일을 등록하고 관리자 Google OAuth를 완료합니다. 이후 관리자가 일반 사용자 초대 링크를 발급합니다.
 
@@ -206,7 +239,7 @@ terraform -chdir=terraform fmt -check
 terraform -chdir=terraform validate
 ```
 
-`bun run quality`는 Prettier 포맷 검사, Biome 린트, ESLint/Svelte 린트, Svelte 타입체커, Knip 데드코드 검사, Vitest를 순서대로 실행합니다. 각 단계가 실패하면 즉시 종료하며, ESLint는 warning도 허용하지 않습니다. 포맷은 기존 Svelte 지원이 필요한 Prettier를 사용하고, Biome은 TypeScript/JavaScript/JSON 계열의 린트와 import·미사용 코드 검사를 담당합니다. Knip에 새 진입점이나 동적 로딩이 추가되면 `knip.json`의 `entry`를 함께 갱신합니다.
+`bun run quality`는 Prettier 포맷 검사, Biome 린트, ESLint/React 린트, React Router 타입 생성·TypeScript 검사, Knip 데드코드 검사, Vitest를 순서대로 실행합니다. 각 단계가 실패하면 즉시 종료하며, ESLint는 warning도 허용하지 않습니다. Biome은 TypeScript/JavaScript/JSON 계열의 린트와 import·미사용 코드 검사를 담당합니다. Knip에 새 진입점이나 동적 로딩이 추가되면 `knip.json`의 `entry`를 함께 갱신합니다.
 
 실제 배포 검증에서는 관리자 OAuth 로그인/Drive 연결, 외부 브라우저의 ID·비밀번호·패스키 등록, 비밀번호 변경 요청·링크 사용, 파일 업로드·재시도·다운로드·이름 변경·삭제·복구를 순서대로 확인해야 합니다.
 

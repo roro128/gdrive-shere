@@ -35,3 +35,6 @@ client_secret*.json
 *.sqlite3
 *.db
 wrangler.local.jsonc
+.react-router/
+.codex-chrome-profile/
+.codex-chrome-profile-gshare/

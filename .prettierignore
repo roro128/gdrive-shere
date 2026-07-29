@@ -1,3 +1,5 @@
 terraform/**/*.tfstate
 terraform/**/*.tfstate.*
 terraform/**/*.tfvars
+.codex-chrome-profile/**
+.codex-chrome-profile-gshare/**

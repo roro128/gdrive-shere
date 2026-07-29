@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '$lib/server/runtime';
 import { googleAuthorizeUrl } from './google';
 
 function oauthEvent(): RequestEvent {

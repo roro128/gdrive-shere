@@ -1,3 +1,5 @@
+import { readResponseMessage } from './response-message';
+
 export const INTERNAL_FILE_DRAG_TYPE = 'application/x-gdrive-file';
 
 export type MovableFile = {
@@ -20,6 +22,13 @@ export type MoveResult<T extends MovableFile> = {
   failed: MoveFailure<T>[];
 };
 
+export function selectMoveCandidates<T extends MovableFile>(
+  files: readonly T[],
+  targetParentId: string
+): T[] {
+  return files.filter((file) => file.id !== targetParentId && file.parents?.[0] !== targetParentId);
+}
+
 export function createInternalDragPayload(
   transfer: DragPayloadWriter,
   files: readonly MovableFile[]
@@ -39,9 +48,20 @@ export function readInternalDragIds(transfer: DragPayloadReader | null | undefin
   }
 }
 
+export function firstInternalDragId(transfer: DragPayloadReader | null | undefined): string | null {
+  return readInternalDragIds(transfer)[0] ?? null;
+}
+
+export function resolveInternalDragIds(
+  transfer: DragPayloadReader | null | undefined,
+  fallbackIds: readonly string[] = []
+): string[] {
+  const ids = readInternalDragIds(transfer);
+  return ids.length > 0 ? ids : [...fallbackIds];
+}
+
 async function responseMessage(response: Response): Promise<string> {
-  const message = (await response.text()).trim();
-  return message || `이동 요청이 실패했습니다. (${response.status})`;
+  return readResponseMessage(response, `이동 요청이 실패했습니다. (${response.status})`);
 }
 
 export async function moveFiles<T extends MovableFile>(
@@ -49,9 +69,7 @@ export async function moveFiles<T extends MovableFile>(
   targetParentId: string,
   request: MoveRequest
 ): Promise<MoveResult<T>> {
-  const candidates = files.filter(
-    (file) => file.id !== targetParentId && file.parents?.[0] !== targetParentId
-  );
+  const candidates = selectMoveCandidates(files, targetParentId);
   const settled = await Promise.all(
     candidates.map(async (file) => {
       try {

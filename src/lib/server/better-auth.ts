@@ -3,13 +3,21 @@ import { passkey } from '@better-auth/passkey';
 import { betterAuth } from 'better-auth';
 import { username } from 'better-auth/plugins';
 import { createAuthMiddleware, APIError } from 'better-auth/api';
-import type { RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '$lib/server/runtime';
 import { and, eq, isNull } from 'drizzle-orm';
 import { appOrigin, rpId } from './auth';
 import { decrypt, encrypt, hashPassword, verifyPassword } from './crypto';
 import { createDatabase } from './drizzle/client';
 import { authSchema, authUser, invitations, users } from './drizzle/auth-schema';
 import { database, now } from './db';
+import { buildPasskeyRegistrationContext, parsePasskeyRegistrationContext } from './webauthn-model';
+import { toInvitationUsedUpdate, toUserStatusUpdate } from './auth-record-model';
+
+export type BetterAuthRuntime = {
+  nowMs: () => number;
+};
+
+const defaultRuntime: BetterAuthRuntime = { nowMs: () => Date.now() };
 
 function runtime(event: RequestEvent) {
   const env = event.platform?.env;
@@ -23,7 +31,10 @@ function passkeyContextSecret(event: RequestEvent): string {
   return secret;
 }
 
-export function createBetterAuth(event: RequestEvent) {
+export function createBetterAuth(
+  event: RequestEvent,
+  authRuntime: BetterAuthRuntime = defaultRuntime
+) {
   const env = runtime(event);
   const origin = appOrigin(event);
   const secret = env.AUTH_SECRET || env.APP_ENCRYPTION_KEY;
@@ -67,16 +78,15 @@ export function createBetterAuth(event: RequestEvent) {
           resolveUser: async ({ context }) => {
             if (!context)
               throw new APIError('BAD_REQUEST', { message: '등록 context가 필요합니다.' });
-            let payload: { userId: string; expiresAt: number };
-            try {
-              payload = JSON.parse(await decrypt(context, passkeyContextSecret(event))) as {
-                userId: string;
-                expiresAt: number;
-              };
-            } catch {
-              throw new APIError('UNAUTHORIZED', { message: '등록 context가 유효하지 않습니다.' });
-            }
-            if (payload.expiresAt < Date.now())
+            const decryptedContext = await decrypt(context, passkeyContextSecret(event)).catch(
+              () => {
+                throw new APIError('UNAUTHORIZED', {
+                  message: '등록 context가 유효하지 않습니다.'
+                });
+              }
+            );
+            const payload = parsePasskeyRegistrationContext(decryptedContext, authRuntime.nowMs());
+            if (!payload)
               throw new APIError('UNAUTHORIZED', { message: '등록 context가 만료되었습니다.' });
             const user = await createDatabase(event)
               .select({ id: authUser.id, name: authUser.name, email: authUser.email })
@@ -96,13 +106,13 @@ export function createBetterAuth(event: RequestEvent) {
             if (!linked) return;
             await database(event)
               .update(users)
-              .set({ status: 'active', updated_at: now() })
+              .set(toUserStatusUpdate('active', now()))
               .where(eq(users.id, linked.id))
               .run();
             if (linked.invitation_id)
               await database(event)
                 .update(invitations)
-                .set({ used_at: now() })
+                .set(toInvitationUsedUpdate(now()))
                 .where(and(eq(invitations.id, linked.invitation_id), isNull(invitations.used_at)))
                 .run();
           }
@@ -122,10 +132,11 @@ export function createBetterAuth(event: RequestEvent) {
 export async function createPasskeyRegistrationContext(
   event: RequestEvent,
   userId: string,
-  ttlMs = 5 * 60 * 1000
+  ttlMs = 5 * 60 * 1000,
+  runtime: BetterAuthRuntime = defaultRuntime
 ): Promise<string> {
   return encrypt(
-    JSON.stringify({ userId, expiresAt: Date.now() + ttlMs }),
+    buildPasskeyRegistrationContext(userId, runtime.nowMs(), ttlMs),
     passkeyContextSecret(event)
   );
 }

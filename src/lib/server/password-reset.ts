@@ -1,4 +1,4 @@
-import type { RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '$lib/server/runtime';
 import { hashPassword, randomToken, sha256 } from './crypto';
 import { database, newId, now, recordAudit } from './db';
 import { requireUser, normalizeLoginId } from './auth';
@@ -13,6 +13,17 @@ import {
   users,
   legacySessions
 } from './drizzle/auth-schema';
+import { isValidPasswordLength } from '../password-policy';
+import {
+  buildPasswordResetLinkPlan,
+  buildPendingPasswordResetRequest,
+  toPasswordResetContext,
+  toAuthAccountPasswordUpdate,
+  toPasswordResetLinkUsedUpdate,
+  toPasswordResetRequestHandledUpdate,
+  toPasswordResetRequestView,
+  toUserPasswordUpdate
+} from './password-reset-model';
 
 const RESET_TTL_MS = 60 * 60 * 1000;
 
@@ -35,7 +46,7 @@ export async function requestPasswordReset(event: RequestEvent, rawLoginId: stri
   if (existing) return;
   await database(event)
     .insert(passwordResetRequests)
-    .values({ id: newId(), user_id: user.id, status: 'pending', created_at: now() })
+    .values(buildPendingPasswordResetRequest(user.id, { now, newId }))
     .run();
 }
 
@@ -61,12 +72,7 @@ export async function listPasswordResetRequests(event: RequestEvent) {
     .where(ne(passwordResetRequests.status, 'completed'))
     .orderBy(asc(passwordResetRequests.created_at))
     .all();
-  return rows.map((row) => ({
-    ...row.request,
-    login_id: row.login_id,
-    display_name: row.display_name,
-    expires_at: row.expires_at
-  }));
+  return rows.map(toPasswordResetRequestView);
 }
 
 export async function createPasswordResetLink(event: RequestEvent, requestId: string) {
@@ -105,14 +111,7 @@ export async function createDirectPasswordResetLink(event: RequestEvent, userId:
     )
     .orderBy(asc(passwordResetRequests.created_at))
     .get();
-  const request = existing ?? {
-    id: newId(),
-    user_id: member.id,
-    status: 'pending',
-    created_at: now(),
-    handled_at: null,
-    handled_by: null
-  };
+  const request = existing ?? buildPendingPasswordResetRequest(member.id, { now, newId });
   if (!existing) await database(event).insert(passwordResetRequests).values(request).run();
 
   const result = await issuePasswordResetLink(event, admin.id, request);
@@ -137,16 +136,7 @@ export async function getPasswordResetContext(event: RequestEvent, token: string
     .where(eq(passwordResetLinks.token_hash, tokenHash))
     .get();
 
-  if (!link || link.used_at || link.user_status !== 'active' || link.expires_at <= now()) {
-    return { valid: false as const };
-  }
-
-  return {
-    valid: true as const,
-    handle: link.handle ?? link.login_id,
-    loginId: link.login_id,
-    expiresAt: link.expires_at
-  };
+  return toPasswordResetContext(link, now());
 }
 
 async function issuePasswordResetLink(
@@ -155,36 +145,38 @@ async function issuePasswordResetLink(
   request: typeof passwordResetRequests.$inferSelect
 ) {
   const rawToken = randomToken(32);
-  const linkId = newId();
-  const createdAt = now();
-  const expiresAt = new Date(Date.now() + RESET_TTL_MS).toISOString();
+  const linkPlan = buildPasswordResetLinkPlan(
+    {
+      requestId: request.id,
+      userId: request.user_id,
+      tokenHash: await sha256(rawToken),
+      createdBy: adminId,
+      ttlMs: RESET_TTL_MS
+    },
+    { now, newId }
+  );
   await database(event)
     .update(passwordResetLinks)
-    .set({ used_at: createdAt })
+    .set(toPasswordResetLinkUsedUpdate(linkPlan.createdAt))
     .where(and(eq(passwordResetLinks.request_id, request.id), isNull(passwordResetLinks.used_at)))
     .run();
-  await database(event)
-    .insert(passwordResetLinks)
-    .values({
-      id: linkId,
-      request_id: request.id,
-      user_id: request.user_id,
-      token_hash: await sha256(rawToken),
-      expires_at: expiresAt,
-      created_by: adminId,
-      created_at: createdAt
-    })
-    .run();
+  await database(event).insert(passwordResetLinks).values(linkPlan.record).run();
   await database(event)
     .update(passwordResetRequests)
-    .set({ status: 'link_created', handled_at: createdAt, handled_by: adminId })
+    .set(
+      toPasswordResetRequestHandledUpdate({
+        status: 'link_created',
+        handledAt: linkPlan.createdAt,
+        handledBy: adminId
+      })
+    )
     .where(eq(passwordResetRequests.id, request.id))
     .run();
-  return { link: `${event.url.origin}/reset/${rawToken}`, expiresAt };
+  return { link: `${event.url.origin}/reset/${rawToken}`, expiresAt: linkPlan.expiresAt };
 }
 
 export async function resetPassword(event: RequestEvent, token: string, password: string) {
-  if (password.length < 8 || password.length > 128)
+  if (!isValidPasswordLength(password))
     badRequest('비밀번호는 8자 이상 128자 이하로 입력해주세요.');
   const tokenHash = await sha256(token);
   const joined = await database(event)
@@ -211,7 +203,7 @@ export async function resetPassword(event: RequestEvent, token: string, password
   const changedAt = now();
   const claim = await database(event)
     .update(passwordResetLinks)
-    .set({ used_at: changedAt })
+    .set(toPasswordResetLinkUsedUpdate(changedAt))
     .where(
       and(
         eq(passwordResetLinks.id, link.id),
@@ -224,14 +216,14 @@ export async function resetPassword(event: RequestEvent, token: string, password
 
   await database(event)
     .update(users)
-    .set({ password_hash: passwordHash, updated_at: changedAt })
+    .set(toUserPasswordUpdate(passwordHash, changedAt))
     .where(eq(users.id, link.user_id))
     .run();
   if (link.auth_user_id) {
     const db = createDatabase(event);
     await db
       .update(authAccount)
-      .set({ password: passwordHash, updatedAt: new Date() })
+      .set(toAuthAccountPasswordUpdate(passwordHash, new Date(changedAt)))
       .where(
         and(eq(authAccount.userId, link.auth_user_id), eq(authAccount.providerId, 'credential'))
       )
@@ -240,7 +232,7 @@ export async function resetPassword(event: RequestEvent, token: string, password
   }
   await database(event)
     .update(passwordResetRequests)
-    .set({ status: 'completed', handled_at: changedAt })
+    .set(toPasswordResetRequestHandledUpdate({ status: 'completed', handledAt: changedAt }))
     .where(eq(passwordResetRequests.id, link.request_id))
     .run();
   await database(event)

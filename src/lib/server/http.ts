@@ -1,23 +1,37 @@
-import { error, json } from '@sveltejs/kit';
+export function json<T>(data: T, init?: ResponseInit): Response {
+  return Response.json(data, init);
+}
 
 export function ok<T>(data: T, init?: ResponseInit): Response {
   return json(data, init);
 }
 
 export function badRequest(message: string): never {
-  error(400, message);
+  throw new Response(JSON.stringify({ message }), {
+    status: 400,
+    headers: { 'content-type': 'application/json' }
+  });
 }
 
 export function unauthorized(message = '로그인이 필요합니다.'): never {
-  error(401, message);
+  throw new Response(JSON.stringify({ message }), {
+    status: 401,
+    headers: { 'content-type': 'application/json' }
+  });
 }
 
 export function forbidden(message = '이 작업을 수행할 권한이 없습니다.'): never {
-  error(403, message);
+  throw new Response(JSON.stringify({ message }), {
+    status: 403,
+    headers: { 'content-type': 'application/json' }
+  });
 }
 
 export function notFound(message = '대상을 찾을 수 없습니다.'): never {
-  error(404, message);
+  throw new Response(JSON.stringify({ message }), {
+    status: 404,
+    headers: { 'content-type': 'application/json' }
+  });
 }
 
 export function assertSameOrigin(request: Request, origin: string): void {

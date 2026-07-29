@@ -1,4 +1,4 @@
-import type { RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '$lib/server/runtime';
 import { eq } from 'drizzle-orm';
 import { createDatabase } from './drizzle/client';
 import {
@@ -9,6 +9,7 @@ import {
   type driveFiles,
   type uploadSessions
 } from './drizzle/auth-schema';
+import { buildAuditEventRecord, buildSettingMutation } from './db-runtime-model';
 
 export type UserRole = 'admin' | 'member';
 export type UserStatus = 'pending' | 'active' | 'disabled';
@@ -40,10 +41,14 @@ export async function getSetting(event: RequestEvent, key: string): Promise<stri
 }
 
 export async function setSetting(event: RequestEvent, key: string, value: string): Promise<void> {
+  const mutation = buildSettingMutation({ key, value }, { now, newId });
   await database(event)
     .insert(settings)
-    .values({ key, value, updated_at: now() })
-    .onConflictDoUpdate({ target: settings.key, set: { value, updated_at: now() } })
+    .values(mutation.insert)
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: mutation.update
+    })
     .run();
 }
 
@@ -56,13 +61,6 @@ export async function recordAudit(
 ): Promise<void> {
   await database(event)
     .insert(auditEvents)
-    .values({
-      id: newId(),
-      user_id: userId,
-      action,
-      target_id: targetId,
-      metadata: JSON.stringify(metadata),
-      created_at: now()
-    })
+    .values(buildAuditEventRecord({ userId, action, targetId, metadata }, { now, newId }))
     .run();
 }

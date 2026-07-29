@@ -1,15 +1,19 @@
-import type { RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '$lib/server/runtime';
 import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { sha256 } from './crypto';
 import { createBetterAuth } from './better-auth';
 import { database, newId, now, type UserRole, type UserRow } from './db';
 import { badRequest, forbidden } from './http';
 import { normalizeLoginId } from './auth';
+import { buildBetterAuthRegistrationBody } from './auth-model';
 import { invitations, users } from './drizzle/auth-schema';
-
-function syntheticEmail(loginId: string): string {
-  return `${loginId}@users.gdrive-share.invalid`;
-}
+import { isValidPasswordLength } from '../password-policy';
+import {
+  toActiveMemberUpdate,
+  toInvitationUsedUpdate,
+  buildLinkedMemberClaim,
+  buildLinkedMemberUser
+} from './auth-record-model';
 
 async function removePartialRegistration(
   event: RequestEvent,
@@ -18,11 +22,10 @@ async function removePartialRegistration(
 ): Promise<void> {
   const d1 = event.platform?.env.DB;
   if (!d1) return;
-  const statements = [];
-  if (domainUserId) {
-    statements.push(d1.prepare('DELETE FROM users WHERE id = ?').bind(domainUserId));
-  }
-  statements.push(d1.prepare('DELETE FROM auth_user WHERE id = ?').bind(authUserId));
+  const statements = [
+    ...(domainUserId ? [d1.prepare('DELETE FROM users WHERE id = ?').bind(domainUserId)] : []),
+    d1.prepare('DELETE FROM auth_user WHERE id = ?').bind(authUserId)
+  ];
   try {
     await d1.batch(statements);
   } catch (cause) {
@@ -62,7 +65,7 @@ export async function registerMemberWithBetterAuth(
   const displayName = input.displayName?.trim().slice(0, 80);
   if (!displayName) badRequest('이름을 입력해주세요.');
   const loginId = normalizeLoginId(input.loginId);
-  if (input.password.length < 8 || input.password.length > 128)
+  if (!isValidPasswordLength(input.password))
     badRequest('비밀번호는 8자 이상 128자 이하로 입력해주세요.');
 
   const existing = await database(event)
@@ -77,13 +80,13 @@ export async function registerMemberWithBetterAuth(
     if (!invitation.used_at) {
       await database(event)
         .update(invitations)
-        .set({ used_at: now() })
+        .set(toInvitationUsedUpdate(now()))
         .where(and(eq(invitations.id, invitation.id), isNull(invitations.used_at)))
         .run();
     }
     await database(event)
       .update(users)
-      .set({ status: 'active', handle: loginId, updated_at: now() })
+      .set(toActiveMemberUpdate(loginId, now()))
       .where(eq(users.id, existing.id))
       .run();
     return { user: { ...(existing as UserRow), status: 'active' } };
@@ -99,31 +102,19 @@ export async function registerMemberWithBetterAuth(
 
   const auth = createBetterAuth(event);
   const result = await auth.api.signUpEmail({
-    body: {
-      name: displayName,
-      email: syntheticEmail(loginId),
-      password: input.password,
-      username: loginId,
-      displayUsername: loginId
-    },
+    body: buildBetterAuthRegistrationBody({ displayName, loginId, password: input.password }),
     headers: new Headers({ 'x-gdrive-invite': '1' })
   });
 
-  const user: UserRow = {
-    id: newId(),
-    display_name: displayName,
-    role: 'member',
-    status: 'active',
-    invitation_id: invitation.id,
-    login_id: loginId,
-    handle: loginId,
-    avatar_url: null,
-    password_hash: null,
-    google_subject: null,
-    auth_user_id: result.user.id,
-    created_at: now(),
-    updated_at: now()
-  };
+  const user = buildLinkedMemberUser(
+    {
+      displayName,
+      invitationId: invitation.id,
+      loginId,
+      authUserId: result.user.id
+    },
+    { now, newId }
+  );
 
   const d1 = event.platform?.env.DB;
   if (!d1) {
@@ -132,7 +123,7 @@ export async function registerMemberWithBetterAuth(
   }
 
   try {
-    const claimedAt = now();
+    const claim = buildLinkedMemberClaim(user, invitation.id, { now, newId });
     const results = await d1.batch([
       d1
         .prepare(
@@ -145,15 +136,15 @@ export async function registerMemberWithBetterAuth(
           WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`
         )
         .bind(
-          user.id,
-          user.display_name,
-          user.login_id,
-          user.handle,
-          user.auth_user_id,
-          user.created_at,
-          user.updated_at,
-          invitation.id,
-          claimedAt
+          claim.userId,
+          claim.displayName,
+          claim.loginId,
+          claim.handle,
+          claim.authUserId,
+          claim.createdAt,
+          claim.updatedAt,
+          claim.invitationId,
+          claim.claimedAt
         ),
       d1
         .prepare(
@@ -165,7 +156,7 @@ export async function registerMemberWithBetterAuth(
                WHERE invitation_id = ? AND auth_user_id = ?
              )`
         )
-        .bind(claimedAt, invitation.id, invitation.id, result.user.id)
+        .bind(claim.claimedAt, claim.invitationId, claim.invitationId, claim.authUserId)
     ]);
     if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
       await removePartialRegistration(event, result.user.id, user.id);

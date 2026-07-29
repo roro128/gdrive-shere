@@ -1,14 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 
 declare global {
-  namespace App {
-    interface Platform {
-      env: Env;
-      context: ExecutionContext;
-      caches: CacheStorage;
-    }
-  }
-
   interface Env {
     DB: D1Database;
     APP_ORIGIN?: string;

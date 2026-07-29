@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   INTERNAL_FILE_DRAG_TYPE,
   createInternalDragPayload,
+  firstInternalDragId,
   moveFiles,
   readInternalDragIds,
+  resolveInternalDragIds,
+  selectMoveCandidates,
   type MovableFile
 } from './file-move';
 
@@ -24,6 +27,7 @@ describe('internal file drag payload', () => {
 
     expect(data.get(INTERNAL_FILE_DRAG_TYPE)).toBe('["video-1","folder-b"]');
     expect(readInternalDragIds(transfer)).toEqual(['video-1', 'folder-b']);
+    expect(firstInternalDragId(transfer)).toBe('video-1');
   });
 
   it('accepts the legacy single-id payload used by an in-progress browser drag', () => {
@@ -35,10 +39,26 @@ describe('internal file drag payload', () => {
   it('rejects malformed and non-string JSON payloads', () => {
     expect(readInternalDragIds({ getData: () => '{broken' })).toEqual([]);
     expect(readInternalDragIds({ getData: () => '[1,null]' })).toEqual([]);
+    expect(firstInternalDragId({ getData: () => '' })).toBeNull();
+  });
+
+  it('uses the active drag state when a browser drops without the custom payload', () => {
+    expect(resolveInternalDragIds({ getData: () => '' }, ['video-1', 'folder-b'])).toEqual([
+      'video-1',
+      'folder-b'
+    ]);
+    expect(resolveInternalDragIds({ getData: () => '["video-1"]' }, ['folder-b'])).toEqual([
+      'video-1'
+    ]);
   });
 });
 
 describe('moveFiles', () => {
+  it('selects only files that are not already in or equal to the target folder', () => {
+    expect(selectMoveCandidates(files, 'folder-a')).toEqual([]);
+    expect(selectMoveCandidates(files, 'target-folder')).toEqual(files);
+  });
+
   it('moves files and folders to a child folder and reports all successes', async () => {
     const patch = vi.fn(async () => new Response(null, { status: 200 }));
 
@@ -72,5 +92,21 @@ describe('moveFiles', () => {
 
     expect(result.moved).toEqual([files[0]]);
     expect(result.failed).toEqual([{ file: files[1], message: '대상 폴더에 접근할 수 없습니다.' }]);
+  });
+
+  it('shows the API message when a move endpoint returns JSON error data', async () => {
+    const patch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ message: '공유 폴더에서는 이동할 수 없습니다.' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' }
+        })
+    );
+
+    const result = await moveFiles([files[0]], 'target-folder', patch);
+
+    expect(result.failed).toEqual([
+      { file: files[0], message: '공유 폴더에서는 이동할 수 없습니다.' }
+    ]);
   });
 });

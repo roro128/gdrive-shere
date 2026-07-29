@@ -1,4 +1,4 @@
-import type { RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '$lib/server/runtime';
 import { and, eq, ne, or, desc, sql } from 'drizzle-orm';
 import { database, newId, now, recordAudit, type DriveFileRow, type UserRow } from './db';
 import { createDriveFolder, ensureRootFolder } from './google';
@@ -10,11 +10,19 @@ import {
   users,
   userSpaces
 } from './drizzle/auth-schema';
+import {
+  canManageFolderShares,
+  normalizeShareSearchQuery,
+  prepareRequestedShares,
+  selectEligibleShareIds
+} from '../share-management';
+import { collectAccessPath, resolveFileAccess, type SpacePermission } from './space-access-model';
+import { buildOwnedSharedFolderListing, mergeSharedFolderListings } from './shared-folder-model';
+import { buildFolderShareMutations, buildShareInvitationResponse } from './share-persistence-model';
+import { buildUserSpaceCreationRecords } from './db-record-model';
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const MAX_ANCESTOR_DEPTH = 64;
-
-type SpacePermission = 'owner' | 'viewer' | 'editor' | 'admin';
 
 export interface SpaceAccess {
   file: DriveFileRow;
@@ -34,7 +42,16 @@ export async function ensureUserSpace(event: RequestEvent, user: UserRow): Promi
   const appRootId = await ensureRootFolder(event);
   const label = `${user.display_name} · ${user.login_id ?? 'admin'}`.slice(0, 120);
   const folder = await createDriveFolder(event, label, appRootId);
-  const createdAt = now();
+  const records = buildUserSpaceCreationRecords(
+    {
+      driveFileId: folder.id,
+      name: folder.name,
+      mimeType: folder.mimeType,
+      parentDriveId: appRootId,
+      userId: user.id
+    },
+    { now, newId }
+  );
   const d1 = event.platform?.env.DB;
   if (!d1) throw new Error('Cloudflare D1 binding DB is not configured');
   try {
@@ -47,19 +64,23 @@ export async function ensureUserSpace(event: RequestEvent, user: UserRow): Promi
           ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?)`
         )
         .bind(
-          newId(),
-          folder.id,
-          folder.name,
-          folder.mimeType,
-          appRootId,
-          user.id,
-          user.id,
-          createdAt,
-          createdAt
+          records.driveFile.id,
+          records.driveFile.drive_file_id,
+          records.driveFile.name,
+          records.driveFile.mime_type,
+          records.driveFile.parent_drive_id,
+          records.driveFile.created_by,
+          records.driveFile.owner_user_id,
+          records.driveFile.created_at,
+          records.driveFile.updated_at
         ),
       d1
         .prepare('INSERT INTO user_spaces (user_id, root_drive_id, created_at) VALUES (?, ?, ?)')
-        .bind(user.id, folder.id, createdAt)
+        .bind(
+          records.userSpace.user_id,
+          records.userSpace.root_drive_id,
+          records.userSpace.created_at
+        )
     ]);
   } catch (cause) {
     const raced = await database(event)
@@ -79,52 +100,41 @@ async function fileAccess(
   user: UserRow,
   driveFileId: string
 ): Promise<SpaceAccess | null> {
-  let current = await database(event)
+  const requested = await database(event)
     .select()
     .from(driveFiles)
     .where(eq(driveFiles.drive_file_id, driveFileId))
     .get();
-  if (!current) return null;
-  const requested = current;
+  if (!requested) return null;
 
   if (user.role === 'admin') {
-    return {
-      file: requested,
-      ownerUserId: requested.owner_user_id ?? '',
-      permission: 'admin'
-    };
+    return resolveFileAccess(requested, [requested], new Map(), user.id, true);
   }
 
-  for (let depth = 0; depth < MAX_ANCESTOR_DEPTH; depth += 1) {
-    if (current.owner_user_id === user.id) {
-      return { file: requested, ownerUserId: user.id, permission: 'owner' };
-    }
-    const share = await database(event)
-      .select({ permission: folderShares.permission })
-      .from(folderShares)
-      .where(
-        and(
-          eq(folderShares.folder_drive_id, current.drive_file_id),
-          eq(folderShares.user_id, user.id)
-        )
-      )
-      .get();
-    if (share) {
-      return {
-        file: requested,
-        ownerUserId: current.owner_user_id ?? requested.owner_user_id ?? '',
-        permission: share.permission === 'viewer' ? 'viewer' : 'editor'
-      };
-    }
-    if (!current.parent_drive_id) return null;
-    current = await database(event)
-      .select()
-      .from(driveFiles)
-      .where(eq(driveFiles.drive_file_id, current.parent_drive_id))
-      .get();
-    if (!current) return null;
-  }
-  return null;
+  const path = await collectAccessPath(
+    requested,
+    user.id,
+    {
+      findShare: async (folderDriveId) => {
+        const share = await database(event)
+          .select({ permission: folderShares.permission })
+          .from(folderShares)
+          .where(
+            and(eq(folderShares.folder_drive_id, folderDriveId), eq(folderShares.user_id, user.id))
+          )
+          .get();
+        return share?.permission === 'viewer' ? 'viewer' : share ? 'editor' : null;
+      },
+      findParent: async (parentDriveId) =>
+        (await database(event)
+          .select()
+          .from(driveFiles)
+          .where(eq(driveFiles.drive_file_id, parentDriveId))
+          .get()) ?? null
+    },
+    MAX_ANCESTOR_DEPTH
+  );
+  return resolveFileAccess(requested, path.ancestors, path.shares, user.id, false);
 }
 
 export async function requireFileAccess(
@@ -207,28 +217,14 @@ export async function listSharedFolders(event: RequestEvent, user: UserRow) {
           )
           .all()
       ]);
-      const sharedWith = [...accepted, ...pending].map((entry) => entry.displayName);
-      if (!sharedWith.length) return null;
-      return {
-        ...folder,
-        ownerName: user.display_name,
-        permission: 'owner' as const,
-        sharedByMe: true,
-        sharedWithCount: sharedWith.length,
-        sharedWithNames: sharedWith.slice(0, 3)
-      };
+      return buildOwnedSharedFolderListing(folder, user.display_name, accepted, pending);
     })
   );
 
-  return [
-    ...received.map((folder) => ({
-      ...folder,
-      sharedByMe: false,
-      sharedWithCount: 0,
-      sharedWithNames: [] as string[]
-    })),
-    ...ownedShared.filter((folder): folder is NonNullable<typeof folder> => folder !== null)
-  ];
+  return mergeSharedFolderListings(
+    received,
+    ownedShared.filter((folder): folder is NonNullable<typeof folder> => folder !== null)
+  );
 }
 
 export async function listAdminSpaces(event: RequestEvent, admin: UserRow) {
@@ -247,8 +243,13 @@ export async function listAdminSpaces(event: RequestEvent, admin: UserRow) {
     .all();
 }
 
-export async function shareableUsers(event: RequestEvent, user: UserRow, query = '') {
-  const normalized = query.trim().toLowerCase().replace(/^@/, '').slice(0, 80);
+export async function shareableUsers(
+  event: RequestEvent,
+  user: UserRow,
+  query = '',
+  excludedUserId = user.id
+) {
+  const normalized = normalizeShareSearchQuery(query);
   return database(event)
     .select({
       id: users.id,
@@ -261,7 +262,7 @@ export async function shareableUsers(event: RequestEvent, user: UserRow, query =
     .where(
       and(
         eq(users.status, 'active'),
-        ne(users.id, user.id),
+        ne(users.id, excludedUserId),
         normalized
           ? or(
               sql`lower(coalesce(${users.handle}, '')) LIKE ${`%${normalized}%`}`,
@@ -275,16 +276,24 @@ export async function shareableUsers(event: RequestEvent, user: UserRow, query =
     .all();
 }
 
-export async function folderShareState(event: RequestEvent, owner: UserRow, folderDriveId: string) {
-  const access = await requireFolderAccess(event, owner, folderDriveId);
-  if (access.permission !== 'owner') forbidden('폴더 소유자만 공유 설정을 변경할 수 있습니다.');
+export async function folderShareState(
+  event: RequestEvent,
+  manager: UserRow,
+  folderDriveId: string
+) {
+  const access = await requireFolderAccess(event, manager, folderDriveId);
+  if (!canManageFolderShares(access.permission))
+    forbidden('폴더 소유자 또는 관리자만 공유 설정을 변경할 수 있습니다.');
   const shares = await database(event)
     .select({
       userId: folderShares.user_id,
+      displayName: users.display_name,
+      handle: users.handle,
       permission: folderShares.permission,
       status: folderShareInvitations.status
     })
     .from(folderShares)
+    .innerJoin(users, eq(users.id, folderShares.user_id))
     .leftJoin(
       folderShareInvitations,
       and(
@@ -297,10 +306,13 @@ export async function folderShareState(event: RequestEvent, owner: UserRow, fold
   const pending = await database(event)
     .select({
       userId: folderShareInvitations.invited_user_id,
+      displayName: users.display_name,
+      handle: users.handle,
       permission: folderShareInvitations.permission,
       status: folderShareInvitations.status
     })
     .from(folderShareInvitations)
+    .innerJoin(users, eq(users.id, folderShareInvitations.invited_user_id))
     .where(
       and(
         eq(folderShareInvitations.folder_drive_id, folderDriveId),
@@ -308,20 +320,24 @@ export async function folderShareState(event: RequestEvent, owner: UserRow, fold
       )
     )
     .all();
-  return { shares: [...shares, ...pending], users: await shareableUsers(event, owner) };
+  return {
+    shares: [...shares, ...pending],
+    users: await shareableUsers(event, manager, '', access.ownerUserId)
+  };
 }
 
 export async function replaceFolderShares(
   event: RequestEvent,
-  owner: UserRow,
+  manager: UserRow,
   folderDriveId: string,
   requestedUsers: { userId: string; permission: 'viewer' | 'editor' }[]
 ) {
-  const access = await requireFolderAccess(event, owner, folderDriveId);
-  if (access.permission !== 'owner') forbidden('폴더 소유자만 공유 설정을 변경할 수 있습니다.');
+  const access = await requireFolderAccess(event, manager, folderDriveId);
+  if (!canManageFolderShares(access.permission))
+    forbidden('폴더 소유자 또는 관리자만 공유 설정을 변경할 수 있습니다.');
 
-  const unique = new Map(requestedUsers.map((entry) => [entry.userId, entry.permission]));
-  const uniqueIds = [...unique.keys()].filter((id) => id !== owner.id).slice(0, 100);
+  const prepared = prepareRequestedShares(requestedUsers, access.ownerUserId);
+  const { permissions, userIds: uniqueIds } = prepared;
   const eligible = uniqueIds.length
     ? await database(event)
         .select({ id: users.id })
@@ -330,13 +346,13 @@ export async function replaceFolderShares(
         .all()
     : [];
   const eligibleSet = new Set(eligible.map((entry) => entry.id));
-  const userIds = uniqueIds.filter((id) => eligibleSet.has(id));
-  if (userIds.length !== uniqueIds.length)
+  const eligibleSelection = selectEligibleShareIds(uniqueIds, eligibleSet);
+  if (eligibleSelection.hasIneligibleUsers)
     badRequest('공유 대상에 사용할 수 없는 사용자가 있습니다.');
+  const userIds = eligibleSelection.userIds;
 
   const d1 = event.platform?.env.DB;
   if (!d1) throw new Error('Cloudflare D1 binding DB is not configured');
-  const createdAt = now();
   const accepted = await database(event)
     .select({ userId: folderShareInvitations.invited_user_id })
     .from(folderShareInvitations)
@@ -348,45 +364,71 @@ export async function replaceFolderShares(
     )
     .all();
   const acceptedIds = new Set(accepted.map((entry) => entry.userId));
-  await d1.batch([
-    d1.prepare('DELETE FROM folder_shares WHERE folder_drive_id = ?').bind(folderDriveId),
-    d1
-      .prepare(
-        "UPDATE folder_share_invitations SET status = 'revoked', responded_at = ? WHERE folder_drive_id = ? AND status = 'pending'"
-      )
-      .bind(createdAt, folderDriveId),
-    ...userIds.flatMap((userId) => {
-      const permission = unique.get(userId) ?? 'viewer';
-      if (acceptedIds.has(userId)) {
-        return [
-          d1
+  const mutations = buildFolderShareMutations(
+    folderDriveId,
+    userIds,
+    permissions,
+    acceptedIds,
+    manager.id,
+    { now, newId }
+  );
+  await d1.batch(
+    mutations.map((mutation) => {
+      switch (mutation.kind) {
+        case 'delete-grants':
+          return d1
+            .prepare('DELETE FROM folder_shares WHERE folder_drive_id = ?')
+            .bind(mutation.folderId);
+        case 'revoke-pending':
+          return d1
+            .prepare(
+              "UPDATE folder_share_invitations SET status = 'revoked', responded_at = ? WHERE folder_drive_id = ? AND status = 'pending'"
+            )
+            .bind(mutation.respondedAt, mutation.folderId);
+        case 'accept-invitation':
+          return d1
             .prepare(
               "UPDATE folder_share_invitations SET permission = ?, status = 'accepted' WHERE folder_drive_id = ? AND invited_user_id = ?"
             )
-            .bind(permission, folderDriveId, userId),
-          d1
+            .bind(mutation.permission, mutation.folderId, mutation.userId);
+        case 'insert-grant':
+          return d1
             .prepare(
               'INSERT INTO folder_shares (id, folder_drive_id, user_id, permission, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)'
             )
-            .bind(newId(), folderDriveId, userId, permission, owner.id, createdAt)
-        ];
-      }
-      return [
-        d1
-          .prepare(
-            `INSERT INTO folder_share_invitations
+            .bind(
+              mutation.id,
+              mutation.folderId,
+              mutation.userId,
+              mutation.permission,
+              mutation.createdBy,
+              mutation.createdAt
+            );
+        case 'upsert-invitation':
+          return d1
+            .prepare(
+              `INSERT INTO folder_share_invitations
           (id, folder_drive_id, invited_user_id, permission, invited_by, status, created_at)
          VALUES (?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT(folder_drive_id, invited_user_id) DO UPDATE SET permission = excluded.permission, status = 'pending', responded_at = NULL`
-          )
-          .bind(newId(), folderDriveId, userId, permission, owner.id, createdAt)
-      ];
+            )
+            .bind(
+              mutation.id,
+              mutation.folderId,
+              mutation.userId,
+              mutation.permission,
+              mutation.invitedBy,
+              mutation.createdAt
+            );
+        default:
+          throw new Error(`Unknown folder share mutation: ${String(mutation)}`);
+      }
     })
-  ]);
-  await recordAudit(event, owner.id, 'folder.shares.updated', folderDriveId, {
+  );
+  await recordAudit(event, manager.id, 'folder.shares.updated', folderDriveId, {
     sharedUserCount: userIds.length
   });
-  return folderShareState(event, owner, folderDriveId);
+  return folderShareState(event, manager, folderDriveId);
 }
 
 export async function listShareInvitations(event: RequestEvent, user: UserRow) {
@@ -432,36 +474,51 @@ export async function respondToShareInvitation(
     )
     .get();
   if (!invitation) notFound('공유 폴더 신청을 찾을 수 없습니다.');
-  const respondedAt = now();
   const d1 = event.platform?.env.DB;
   if (!d1) throw new Error('Cloudflare D1 binding DB is not configured');
-  if (!accept) {
-    await d1
-      .prepare(
-        "UPDATE folder_share_invitations SET status = 'declined', responded_at = ? WHERE id = ?"
-      )
-      .bind(respondedAt, id)
-      .run();
-    return { accepted: false };
-  }
-  await d1.batch([
-    d1
-      .prepare(
-        "UPDATE folder_share_invitations SET status = 'accepted', responded_at = ? WHERE id = ?"
-      )
-      .bind(respondedAt, id),
-    d1
-      .prepare(
-        'INSERT INTO folder_shares (id, folder_drive_id, user_id, permission, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(folder_drive_id, user_id) DO UPDATE SET permission = excluded.permission'
-      )
-      .bind(
-        newId(),
-        invitation.folder_drive_id,
-        user.id,
-        invitation.permission,
-        invitation.invited_by,
-        respondedAt
-      )
-  ]);
-  return { accepted: true };
+  const mutations = buildShareInvitationResponse(
+    {
+      id: invitation.id,
+      folderId: invitation.folder_drive_id,
+      permission: invitation.permission === 'editor' ? 'editor' : 'viewer',
+      invitedBy: invitation.invited_by
+    },
+    user.id,
+    accept,
+    { now, newId }
+  );
+  await d1.batch(
+    mutations.map((mutation) => {
+      switch (mutation.kind) {
+        case 'decline-invitation':
+          return d1
+            .prepare(
+              "UPDATE folder_share_invitations SET status = 'declined', responded_at = ? WHERE id = ?"
+            )
+            .bind(mutation.respondedAt, mutation.invitationId);
+        case 'accept-invitation-response':
+          return d1
+            .prepare(
+              "UPDATE folder_share_invitations SET status = 'accepted', responded_at = ? WHERE id = ?"
+            )
+            .bind(mutation.respondedAt, mutation.invitationId);
+        case 'upsert-accepted-grant':
+          return d1
+            .prepare(
+              'INSERT INTO folder_shares (id, folder_drive_id, user_id, permission, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(folder_drive_id, user_id) DO UPDATE SET permission = excluded.permission'
+            )
+            .bind(
+              mutation.id,
+              mutation.folderId,
+              mutation.userId,
+              mutation.permission,
+              mutation.createdBy,
+              mutation.createdAt
+            );
+        default:
+          throw new Error(`Unknown invitation mutation: ${String(mutation)}`);
+      }
+    })
+  );
+  return { accepted: accept };
 }

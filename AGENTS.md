@@ -2,13 +2,13 @@
 
 ## 프로젝트 개요
 
-GShare는 SvelteKit 5 기반의 파일 작업공간입니다. Cloudflare Workers에서 실행되며,
+GShare는 React Router v8 기반의 파일 작업공간입니다. Cloudflare Workers에서 실행되며,
 Cloudflare D1(Drizzle ORM)을 메타데이터 저장소로 사용하고 Google Drive를 파일 저장소로
 사용합니다. 인증은 Better Auth와 비밀번호·패스키 흐름으로 구성되어 있습니다.
 
 주요 영역은 다음과 같습니다.
 
-- `src/routes/`: SvelteKit 페이지와 서버 API
+- `app/routes/`: React Router 페이지와 서버 API
 - `src/lib/`: 공용 UI·도메인 로직·서버 모듈
 - `drizzle/`, `migrations/`: ORM 스키마와 D1 migration
 - `terraform/`: Cloudflare·Google Cloud 인프라
@@ -55,14 +55,20 @@ bun run test:watch
 bun run quality
 ```
 
-`bun run quality`는 Biome, ESLint, Svelte 타입 검사, Knip 데드코드 검사, Vitest를
+`bun run quality`는 Biome, ESLint, React Router 타입 생성·TypeScript 검사, Knip 데드코드 검사, Vitest를
 실행합니다. 테스트 변경이나 인증·Drive·migration 변경이 있으면 최소한 관련 테스트와
 전체 `bun run quality`를 실행합니다. UI 변경은 타입 검사만으로 충분하지 않으므로 개발
 서버를 실행해 주요 사용자 흐름을 브라우저에서 직접 확인합니다.
 
 ## 코드 품질과 스타일
 
-- TypeScript와 Svelte의 기존 구조·이름·모듈 경계를 유지합니다.
+- TypeScript와 React Router의 기존 구조·이름·모듈 경계를 유지합니다.
+- 입력만으로 결정되는 계산은 `src/lib/*-model.ts`의 순수 함수로 두고, React 상태 변경,
+  `fetch`, DOM·File·WebAuthn, 시간·난수, DB·Drive 작업은 route/client/server effect 경계에
+  남깁니다. 배열·Set·Map 입력을 직접 변경하지 말고 새 값을 반환합니다.
+- `for...of`를 `map`으로 기계적으로 바꾸지 않습니다. DB·Drive 삭제, 업로드·다운로드처럼
+  실행 순서·취소·오류 중단이 사용자에게 관찰되는 작업은 명시적인 순차 effect로 유지하고,
+  그 앞단의 대상 선별·정책·결과 집계만 순수 모델로 분리합니다.
 - 포맷은 Prettier, TypeScript/JavaScript 계열 린트는 Biome과 ESLint를 사용합니다.
 - 사용하지 않는 코드와 import를 남기지 않습니다.
 - 환경 변수, OAuth 토큰, 암호화 키, Drive session URL을 로그·응답·테스트 fixture에

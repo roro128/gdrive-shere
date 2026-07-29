@@ -197,6 +197,19 @@ export const webauthnChallenges = sqliteTable('webauthn_challenges', {
   created_at: text('created_at').notNull()
 });
 
+export const accountDeletionJobs = sqliteTable(
+  'account_deletion_jobs',
+  {
+    id: text('id').primaryKey(),
+    user_id: text('user_id').notNull(),
+    status: text('status').notNull(),
+    last_error: text('last_error'),
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull()
+  },
+  (table) => ({ userUnique: uniqueIndex('account_deletion_jobs_user_unique').on(table.user_id) })
+);
+
 export const driveFiles = sqliteTable(
   'drive_files',
   {
@@ -367,6 +380,7 @@ export const appSchema = {
   legacySessions,
   invitations,
   webauthnChallenges,
+  accountDeletionJobs,
   driveFiles,
   uploadSessions,
   userSpaces,

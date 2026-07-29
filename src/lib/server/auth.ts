@@ -5,7 +5,7 @@ import {
   verifyRegistrationResponse,
   type WebAuthnCredential
 } from '@simplewebauthn/server';
-import type { RequestEvent } from '@sveltejs/kit';
+import type { RequestEvent } from '$lib/server/runtime';
 import { and, desc, eq, gt, isNull } from 'drizzle-orm';
 import { hashPassword, randomToken, sha256, verifyPassword } from './crypto';
 import { defaultAvatarUrl } from './avatar';
@@ -26,6 +26,25 @@ import {
   webauthnChallenges
 } from './drizzle/auth-schema';
 import { badRequest, forbidden, unauthorized } from './http';
+import { isAllowedEmail, normalizeAllowedEmails, normalizeLoginIdValue } from './auth-model';
+import {
+  buildWebAuthnChallengeRecord,
+  buildRegisteredPasskeyRecord,
+  toPasskeyCredentialOptions,
+  toWebAuthnCredential
+} from './webauthn-model';
+import {
+  buildLegacySessionRecord,
+  buildInvitationRecord,
+  buildGoogleAdminUser,
+  toAvatarUpdate,
+  toInvitationDbRecord,
+  toInvitationUsedUpdate,
+  buildPendingMemberUser,
+  toPendingMemberUserUpdate,
+  toPasskeyCounterUpdate,
+  toUserStatusUpdate
+} from './auth-record-model';
 
 const SESSION_COOKIE = 'gdrive_session';
 const CHALLENGE_COOKIE = 'gdrive_webauthn_challenge';
@@ -61,7 +80,7 @@ async function withDefaultAvatar(event: RequestEvent, user: UserRow): Promise<Us
   const avatar_url = await defaultAvatarUrl(seed);
   await database(event)
     .update(users)
-    .set({ avatar_url, updated_at: now() })
+    .set(toAvatarUpdate(avatar_url, now()))
     .where(eq(users.id, user.id))
     .run();
   return { ...user, avatar_url };
@@ -113,13 +132,12 @@ export async function createSession(event: RequestEvent, userId: string): Promis
   const rawToken = randomToken(32);
   await database(event)
     .insert(legacySessions)
-    .values({
-      id: newId(),
-      user_id: userId,
-      token_hash: await sha256(rawToken),
-      expires_at: new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
-      created_at: now()
-    })
+    .values(
+      buildLegacySessionRecord(
+        { userId, tokenHash: await sha256(rawToken), ttlSeconds: SESSION_TTL_SECONDS },
+        { now, newId }
+      )
+    )
     .run();
 
   event.cookies.set(SESSION_COOKIE, rawToken, {
@@ -162,19 +180,12 @@ async function storeChallenge(
   challenge: string,
   kind: 'registration' | 'authentication'
 ) {
-  const id = newId();
-  await database(event)
-    .insert(webauthnChallenges)
-    .values({
-      id,
-      user_id: userId,
-      challenge,
-      kind,
-      expires_at: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
-      created_at: now()
-    })
-    .run();
-  setChallengeCookie(event, id);
+  const record = buildWebAuthnChallengeRecord(
+    { userId, challenge, kind, ttlMs: CHALLENGE_TTL_MS },
+    { now, newId }
+  );
+  await database(event).insert(webauthnChallenges).values(record).run();
+  setChallengeCookie(event, record.id);
 }
 
 async function consumeChallenge(event: RequestEvent, kind: 'registration' | 'authentication') {
@@ -198,9 +209,8 @@ async function consumeChallenge(event: RequestEvent, kind: 'registration' | 'aut
 }
 
 export function normalizeLoginId(value: string): string {
-  const loginId = value.trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(loginId))
-    badRequest('아이디는 영문 소문자, 숫자, ., _, -로 3~32자까지 입력해주세요.');
+  const loginId = normalizeLoginIdValue(value);
+  if (!loginId) badRequest('아이디는 영문 소문자, 숫자, ., _, -로 3~32자까지 입력해주세요.');
   return loginId;
 }
 
@@ -239,15 +249,10 @@ async function userForInvite(
     .get()) as UserRow | null;
   if (existing) {
     if (existing.status !== 'pending') badRequest('이미 사용된 초대 링크입니다.');
+    const updatedAt = now();
     await database(event)
       .update(users)
-      .set({
-        display_name: display,
-        login_id: loginId,
-        handle: loginId,
-        password_hash: passwordHash,
-        updated_at: now()
-      })
+      .set(toPendingMemberUserUpdate({ displayName: display, loginId, passwordHash, updatedAt }))
       .where(eq(users.id, existing.id))
       .run();
     const updated = await findUserById(event, existing.id);
@@ -255,21 +260,15 @@ async function userForInvite(
     return updated;
   }
 
-  const user: UserRow = {
-    id: newId(),
-    display_name: display,
-    role: invitation.role,
-    status: 'pending',
-    invitation_id: invitation.id,
-    login_id: loginId,
-    handle: loginId,
-    avatar_url: null,
-    password_hash: passwordHash,
-    google_subject: null,
-    auth_user_id: null,
-    created_at: now(),
-    updated_at: now()
-  };
+  const user = buildPendingMemberUser(
+    {
+      displayName: display,
+      invitationId: invitation.id,
+      loginId,
+      passwordHash
+    },
+    { now, newId }
+  );
   if (!user.display_name) badRequest('이름을 입력해주세요.');
   await database(event).insert(users).values(user).run();
   return user;
@@ -302,12 +301,7 @@ export async function registrationOptions(
     userName: user.display_name,
     userDisplayName: user.display_name,
     attestationType: 'none',
-    excludeCredentials: currentPasskeys.map(
-      (passkey: { credential_id: string; transports: string }) => ({
-        id: passkey.credential_id,
-        transports: JSON.parse(passkey.transports) as never[]
-      })
-    ),
+    excludeCredentials: toPasskeyCredentialOptions(currentPasskeys),
     authenticatorSelection: {
       residentKey: 'required',
       userVerification: 'preferred'
@@ -340,29 +334,31 @@ export async function verifyRegistration(
   const credential = info.credential;
   await database(event)
     .insert(passkeys)
-    .values({
-      id: newId(),
-      user_id: challenge.user_id,
-      credential_id: credential.id,
-      public_key: credential.publicKey as never,
-      counter: credential.counter,
-      transports: '[]',
-      device_type: info.credentialDeviceType ?? null,
-      backed_up: info.credentialBackedUp ? 1 : 0,
-      created_at: now()
-    })
+    .values(
+      buildRegisteredPasskeyRecord(
+        {
+          userId: challenge.user_id,
+          credentialId: credential.id,
+          publicKey: credential.publicKey,
+          counter: credential.counter,
+          deviceType: info.credentialDeviceType,
+          backedUp: info.credentialBackedUp
+        },
+        { now, newId }
+      )
+    )
     .run();
 
   await database(event)
     .update(users)
-    .set({ status: 'active', updated_at: now() })
+    .set(toUserStatusUpdate('active', now()))
     .where(eq(users.id, challenge.user_id))
     .run();
   const linkedUser = await findUserById(event, challenge.user_id);
   if (linkedUser?.invitation_id)
     await database(event)
       .update(invitations)
-      .set({ used_at: now() })
+      .set(toInvitationUsedUpdate(now()))
       .where(and(eq(invitations.id, linkedUser.invitation_id), isNull(invitations.used_at)))
       .run();
   const user = await findUserById(event, challenge.user_id);
@@ -398,10 +394,7 @@ export async function passwordAuthenticationOptions(
     rpID: rpId(event),
     userVerification: 'preferred',
     timeout: 60_000,
-    allowCredentials: userPasskeys.map((passkey) => ({
-      id: passkey.credential_id,
-      transports: JSON.parse(passkey.transports) as never[]
-    }))
+    allowCredentials: toPasskeyCredentialOptions(userPasskeys)
   });
   await storeChallenge(event, user.id, options.challenge, 'authentication');
   return options;
@@ -429,12 +422,7 @@ export async function verifyAuthentication(
   if (!challenge.user_id || passkey.user_id !== challenge.user_id)
     unauthorized('아이디와 패스키가 일치하지 않습니다.');
 
-  const credential: WebAuthnCredential = {
-    id: passkey.credential_id,
-    publicKey: new Uint8Array(passkey.public_key),
-    counter: passkey.counter,
-    transports: JSON.parse(passkey.transports)
-  };
+  const credential: WebAuthnCredential = toWebAuthnCredential(passkey);
   const verification = await verifyAuthenticationResponse({
     response: response as never,
     expectedChallenge: challenge.challenge,
@@ -445,7 +433,7 @@ export async function verifyAuthentication(
   if (!verification.verified) unauthorized('패스키 인증에 실패했습니다.');
   await database(event)
     .update(passkeys)
-    .set({ counter: verification.authenticationInfo.newCounter })
+    .set(toPasskeyCounterUpdate(verification.authenticationInfo.newCounter))
     .where(eq(passkeys.id, passkey.id))
     .run();
   const user = await findUserById(event, passkey.user_id);
@@ -455,13 +443,9 @@ export async function verifyAuthentication(
 }
 
 export function assertGoogleAdminEmail(event: RequestEvent, email: string | null): void {
-  const allowed = (env(event).GOOGLE_ADMIN_EMAILS ?? '')
-    .split(',')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
+  const allowed = normalizeAllowedEmails(env(event).GOOGLE_ADMIN_EMAILS ?? '');
   if (!allowed.length) forbidden('허용된 Google 관리자 계정이 설정되지 않았습니다.');
-  if (!email || !allowed.includes(email.trim().toLowerCase()))
-    forbidden('허용되지 않은 Google 관리자 계정입니다.');
+  if (!isAllowedEmail(allowed, email)) forbidden('허용되지 않은 Google 관리자 계정입니다.');
 }
 
 export async function hasUsers(event: RequestEvent): Promise<boolean> {
@@ -486,22 +470,14 @@ export async function createAdminFromGoogle(
   if (await hasUsers(event)) forbidden('초기 관리자 계정은 이미 생성되었습니다.');
   if (!profile.subject || !profile.email) badRequest('Google 계정 이메일을 확인할 수 없습니다.');
   assertGoogleAdminEmail(event, profile.email);
-  const displayName = profile.name?.trim().slice(0, 80) || profile.email.split('@')[0];
-  const user: UserRow = {
-    id: newId(),
-    display_name: displayName,
-    role: 'admin',
-    status: 'active',
-    invitation_id: null,
-    login_id: null,
-    handle: null,
-    avatar_url: null,
-    password_hash: null,
-    google_subject: profile.subject,
-    auth_user_id: null,
-    created_at: now(),
-    updated_at: now()
-  };
+  const user = buildGoogleAdminUser(
+    {
+      subject: profile.subject,
+      email: profile.email,
+      name: profile.name
+    },
+    { now, newId }
+  );
   await database(event).insert(users).values(user).run();
   return user;
 }
@@ -510,23 +486,13 @@ export async function createInvitation(event: RequestEvent, role: UserRole = 'me
   const admin = await requireUser(event, 'admin');
   if (role !== 'member') forbidden('관리자 계정은 Google OAuth로만 생성합니다.');
   const rawToken = randomToken(24);
-  const invitation = {
-    id: newId(),
-    tokenHash: await sha256(rawToken),
-    role,
-    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
-    createdAt: now()
-  };
+  const invitation = buildInvitationRecord(
+    { tokenHash: await sha256(rawToken), role, ttlMs: 1000 * 60 * 60 * 24 },
+    { now, newId }
+  );
   await database(event)
     .insert(invitations)
-    .values({
-      id: invitation.id,
-      token_hash: invitation.tokenHash,
-      role: invitation.role,
-      expires_at: invitation.expiresAt,
-      created_by: admin.id,
-      created_at: invitation.createdAt
-    })
+    .values(toInvitationDbRecord({ ...invitation, createdBy: admin.id }))
     .run();
   return { token: rawToken, expiresAt: invitation.expiresAt };
 }
@@ -559,7 +525,7 @@ export async function setUserStatus(
     forbidden('현재 관리자 계정은 비활성화할 수 없습니다.');
   await database(event)
     .update(users)
-    .set({ status, updated_at: now() })
+    .set(toUserStatusUpdate(status, now()))
     .where(eq(users.id, userId))
     .run();
 }

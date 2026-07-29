@@ -1,3 +1,5 @@
+import { isValidPasswordLength } from '../password-policy';
+
 const encoder = new TextEncoder();
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -104,7 +106,7 @@ async function passwordKey(password: string, salt: Uint8Array): Promise<ArrayBuf
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  if (password.length < 8 || password.length > 128)
+  if (!isValidPasswordLength(password))
     throw new Error('비밀번호는 8자 이상 128자 이하로 입력해주세요.');
   const salt = new Uint8Array(16);
   crypto.getRandomValues(salt);
