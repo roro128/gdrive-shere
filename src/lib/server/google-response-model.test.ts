@@ -26,17 +26,28 @@ describe('google response model', () => {
 
   it('maps token and profile payloads without mutating either input', () => {
     const tokenPayload = { refresh_token: 'refresh', access_token: 'access' };
-    const profilePayload = { email: 'person@example.com', sub: 'subject', name: 'Person' };
+    const profilePayload = {
+      email: 'person@example.com',
+      email_verified: true,
+      sub: 'subject',
+      name: 'Person'
+    };
 
     expect(toGoogleToken(tokenPayload)).toEqual({ refreshToken: 'refresh', accessToken: 'access' });
     expect(toGoogleConnection(tokenPayload, profilePayload)).toEqual({
       refreshToken: 'refresh',
       email: 'person@example.com',
+      emailVerified: true,
       subject: 'subject',
       name: 'Person'
     });
     expect(tokenPayload).toEqual({ refresh_token: 'refresh', access_token: 'access' });
-    expect(profilePayload).toEqual({ email: 'person@example.com', sub: 'subject', name: 'Person' });
+    expect(profilePayload).toEqual({
+      email: 'person@example.com',
+      email_verified: true,
+      sub: 'subject',
+      name: 'Person'
+    });
   });
 
   it('normalizes missing OAuth fields to null', () => {
@@ -44,6 +55,7 @@ describe('google response model', () => {
     expect(toGoogleConnection({}, undefined)).toEqual({
       refreshToken: null,
       email: null,
+      emailVerified: false,
       subject: null,
       name: null
     });
@@ -52,19 +64,19 @@ describe('google response model', () => {
   it('plans refresh-token persistence and safe fallback behavior without effects', () => {
     expect(
       planGoogleConnectionPersistence(
-        { refreshToken: 'refresh', email: null, subject: null, name: null },
+        { refreshToken: 'refresh', email: null, emailVerified: false, subject: null, name: null },
         false
       )
     ).toEqual({ kind: 'persist', refreshToken: 'refresh', email: 'connected' });
     expect(
       planGoogleConnectionPersistence(
-        { refreshToken: null, email: null, subject: null, name: null },
+        { refreshToken: null, email: null, emailVerified: false, subject: null, name: null },
         true
       )
     ).toEqual({ kind: 'reuse-existing' });
     expect(
       planGoogleConnectionPersistence(
-        { refreshToken: null, email: null, subject: null, name: null },
+        { refreshToken: null, email: null, emailVerified: false, subject: null, name: null },
         false
       )
     ).toMatchObject({ kind: 'error' });

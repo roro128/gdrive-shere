@@ -4,7 +4,7 @@ import { currentUser } from '$lib/server/auth';
 import { createPasskeyRegistrationContext } from '$lib/server/better-auth';
 import { createDatabase } from '$lib/server/drizzle/client';
 import { authPasskey } from '$lib/server/drizzle/auth-schema';
-import { unauthorized, ok } from '$lib/server/http';
+import { assertSameOrigin, unauthorized, ok } from '$lib/server/http';
 
 export const GET: RequestHandler = async (event) => {
   const user = await currentUser(event);
@@ -18,6 +18,7 @@ export const GET: RequestHandler = async (event) => {
 };
 
 export const POST: RequestHandler = async (event) => {
+  assertSameOrigin(event.request, event.url.origin);
   const user = await currentUser(event);
   if (!user?.auth_user_id) unauthorized('패스키를 사용할 수 있는 계정을 찾을 수 없습니다.');
   return ok({ context: await createPasskeyRegistrationContext(event, user.auth_user_id) });

@@ -9,6 +9,9 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/*.tfvars
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/*.tfvars
 terraform/crash.log
 .env
 .env.*
@@ -38,3 +41,11 @@ wrangler.local.jsonc
 .react-router/
 .codex-chrome-profile/
 .codex-chrome-profile-gshare/
+test-results/
+playwright-report/
+.e2e-fixture/
+
+# Local browser QA captures and development logs
+.codex-*.png
+.codex-*.log
+*.log

@@ -30,6 +30,6 @@ export function resolveGoogleOAuthCallbackPlan(mode: GoogleOAuthMode): GoogleOAu
   return {
     createSession: mode !== 'connect',
     persistConnection: shouldPersistGoogleConnection(mode),
-    requireAdminEmail: mode === 'login'
+    requireAdminEmail: mode !== 'bootstrap'
   };
 }

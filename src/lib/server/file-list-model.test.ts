@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildDriveFileSyncInputs,
+  buildChangedDriveFileSyncOperations,
   buildDriveFileSyncOperations,
   folderIdsForSharedLookup,
   toDriveFileSyncMetadata,
@@ -171,5 +172,72 @@ describe('file list model', () => {
         createdAt: 'created-2'
       }
     ]);
+  });
+
+  it('skips unchanged Drive rows and creates operations only for new or changed files', () => {
+    let idCalls = 0;
+    let nowCalls = 0;
+    const files = [
+      {
+        id: 'unchanged',
+        name: 'same.txt',
+        mimeType: 'text/plain',
+        size: '12',
+        parents: ['parent-1'],
+        modifiedTime: 'modified-1'
+      },
+      {
+        id: 'changed',
+        name: 'new-name.txt',
+        mimeType: 'text/plain',
+        size: '14',
+        parents: ['parent-1'],
+        modifiedTime: 'modified-2'
+      },
+      { id: 'new', name: 'new.txt', mimeType: 'text/plain', parents: ['parent-1'] }
+    ];
+
+    const operations = buildChangedDriveFileSyncOperations(
+      files,
+      new Map([
+        [
+          'unchanged',
+          {
+            drive_file_id: 'unchanged',
+            name: 'same.txt',
+            mime_type: 'text/plain',
+            size_bytes: 12,
+            parent_drive_id: 'parent-1',
+            owner_user_id: 'owner-1',
+            trashed: 0,
+            updated_at: 'modified-1'
+          }
+        ],
+        [
+          'changed',
+          {
+            drive_file_id: 'changed',
+            name: 'old-name.txt',
+            mime_type: 'text/plain',
+            size_bytes: 12,
+            parent_drive_id: 'parent-1',
+            owner_user_id: 'owner-1',
+            trashed: 0,
+            updated_at: 'modified-1'
+          }
+        ]
+      ]),
+      {
+        parentId: 'parent-1',
+        ownerUserId: 'owner-1',
+        createdBy: 'creator-1',
+        newId: () => `row-${++idCalls}`,
+        now: () => `created-${++nowCalls}`
+      }
+    );
+
+    expect(operations.map(({ values }) => values.drive_file_id)).toEqual(['changed', 'new']);
+    expect(idCalls).toBe(2);
+    expect(nowCalls).toBe(2);
   });
 });

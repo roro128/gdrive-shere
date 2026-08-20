@@ -27,6 +27,14 @@ export type UploadSessionRuntime = {
   newId: () => string;
 };
 
+export function isActiveUploadSession(
+  status: string,
+  expiresAt: string,
+  currentTime: string
+): boolean {
+  return status === 'active' && expiresAt > currentTime;
+}
+
 export function normalizeUploadSessionInput(
   input: UploadSessionInput
 ): NormalizedUploadSessionInput | null {

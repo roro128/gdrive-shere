@@ -1,6 +1,7 @@
 import { attachCookies, createRequestEvent, type RequestHandler } from './runtime';
 import { cloudflareContext } from './cloudflare-context';
 import { buildApiRoutes, matchApiRoute, mergeApiRouteParams } from './api-route-matching';
+import { GoogleApiError, googleApiUserMessage } from './google-http-model';
 
 type ApiModule = Partial<Record<'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', RequestHandler>>;
 
@@ -36,6 +37,27 @@ export async function dispatchApiRequest(
     cloudflare.ctx,
     mergeApiRouteParams(params, matched.params)
   );
-  const response = await handler(event);
-  return attachCookies(response, event.cookies);
+  try {
+    const response = await handler(event);
+    return attachCookies(response, event.cookies);
+  } catch (cause) {
+    if (cause instanceof Response) return attachCookies(cause, event.cookies);
+    console.error('API handler failed', {
+      method: request.method,
+      path: url.pathname,
+      error: cause instanceof Error ? cause.name : 'unknown error'
+    });
+    return attachCookies(
+      Response.json(
+        {
+          message:
+            cause instanceof GoogleApiError
+              ? googleApiUserMessage(cause)
+              : '요청을 처리하지 못했습니다.'
+        },
+        { status: cause instanceof GoogleApiError ? 502 : 500 }
+      ),
+      event.cookies
+    );
+  }
 }

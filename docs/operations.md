@@ -20,7 +20,7 @@
 3. D1 migration을 원격으로 적용한다.
 4. Cloudflare secrets를 등록한다.
 5. `bun run deploy`로 앱을 배포한다.
-6. 허용 목록에 등록한 Google 계정으로 관리자 OAuth를 완료한다.
+6. `GOOGLE_ADMIN_EMAILS`에 등록된 `email_verified` Google 계정으로 관리자 OAuth를 완료한다.
 7. 관리자 화면에서 Google Drive 연결 상태와 전용 폴더 생성을 확인한다.
 8. 테스트 브라우저에서 초대 링크를 열어 ID·비밀번호만으로 계정을 만든다. 패스키 없이 비밀번호 로그인되는지 확인한다.
 9. **내 정보**에서 패스키를 등록한 뒤 패스키 로그인도 확인하고, 패스키 제거 후 비밀번호 로그인이 유지되는지 확인한다.
@@ -38,8 +38,25 @@ Invoke-WebRequest https://<host>/api/health | Select-Object -ExpandProperty Cont
 bunx wrangler tail gdrive-share
 ```
 
-health 응답에서 `database: true`, `googleConnected: true`를 확인한다.
+health 응답에서 `database: true`, `googleConnected: true`를 확인한다. `googleConnected`는
+저장된 refresh token의 존재만 보지 않고 Google Drive API 호출까지 확인하므로 `false`이면
+관리자 Google 계정으로 다시 **Drive 연결**을 완료한다. 파일 목록과 업로드가 동시에 실패하면
+먼저 이 값을 확인한다.
 운영 로그에 access token, refresh token, invite token, resumable session URL을 출력하지 않는다.
+
+외부 Better Auth 이메일 가입 endpoint는 차단되어 있으며 멤버 계정은 초대 링크의 내부 가입
+경로에서만 생성된다. POST·PUT·PATCH·DELETE 요청은 same-origin `Origin`이 없거나 다르면
+거부된다. 파일 inline 미리보기는 text/plain으로 제한되어 HTML을 실행하지 않는다.
+
+Google Drive 인증은 OAuth callback에서 발급받은 refresh token만 D1에 암호화해 보관한다. 파일
+요청마다 access token을 갱신하고, Drive가 만료된 access token으로 401을 반환하면 새 token으로
+한 번만 재시도한다. 따라서 연결 후 오래 쉬었다가 다시 사용해도 별도 로그인 없이 첫 요청에서
+자동 갱신된다. `invalid_grant`처럼 Google이 refresh token 자체를 폐기한 경우에는 OAuth
+동의 없이는 복구할 수 없으므로 관리자만 **Drive 연결**을 한 번 다시 완료해야 한다.
+Cloudflare Cron(`0 18 * * *` UTC, 매일 03:00 KST)은 같은 연결 점검을 백그라운드에서 실행해
+다음 사용 전에 상태를 확인한다. Google OAuth 동의 화면이 Testing 상태이면 Google 정책상
+refresh token이 일정 기간 후 폐기될 수 있으므로, 정기적인 재연결을 없애려면 동의 화면을
+Production으로 게시해야 한다. Cron은 폐기된 refresh token을 사용자 동의 없이 복구하지 않는다.
 
 ## OAuth 문제 해결
 
@@ -57,7 +74,8 @@ health 응답에서 `database: true`, `googleConnected: true`를 확인한다.
 ## 복구
 
 - D1 장애: 마지막 백업 또는 Cloudflare D1 복구 기능을 사용한다.
-- Google OAuth 폐기: 관리자 Google 연결을 다시 진행한다.
+- Google OAuth 폐기(`invalid_grant`): refresh token이 폐기된 경우이므로 관리자 Google 계정으로
+  **Drive 연결**을 다시 진행한다. access token 만료 자체는 자동 갱신 대상이다.
 - 패스키 분실: 비밀번호로 로그인한 뒤 **내 정보**에서 기존 패스키를 제거하고 새 패스키를 등록한다.
 - 비밀번호 분실 또는 관리자 초기화: 관리자 화면의 **비밀번호 변경 링크**에서 활성 멤버를 선택해 링크를 생성하고 직접 전달한다. 사용자가 요청한 경우에는 아래 **분실 요청**에서 해당 요청의 링크를 생성한다.
 - 업로드 실패: 업로드 tray의 실패 항목을 다시 올린다.
@@ -69,6 +87,7 @@ health 응답에서 `database: true`, `googleConnected: true`를 확인한다.
 - 사용자 개인 폴더는 해당 사용자가 처음 파일 목록을 열거나 업로드할 때 자동 생성된다. Drive 앱 루트의 폴더를 Google Drive 웹 UI에서 임의로 이동·삭제하지 않는다.
 - 공유는 Google Drive의 공유 권한이 아니라 D1 `folder_shares` ACL로 제어한다. Drive 파일의 실제 소유·quota는 연결한 관리자 Google 계정에 남는다.
 - 상단의 남은 공간 표시는 Google Drive `storageQuota` 기준이다. 권한을 추가한 뒤에는 관리자 Google Drive를 다시 연결해야 새 OAuth 권한이 refresh token에 반영된다.
+- 기존 Drive 파일 다운로드 권한을 추가한 배포 뒤에는 관리자만 **Drive 연결**을 다시 완료한다. 기존 연결을 유지하면 파일 목록은 보여도 본문 다운로드가 403으로 거부될 수 있다.
 - 핸들 변경 스키마를 배포할 때는 `migrations/0006_user_handles.sql`을 먼저 적용한다. 기존 계정의 `login_id`는 자동으로 핸들에 복사된다.
 - 공유 관리에는 현재 공유 대상과 `pending` 초대가 함께 표시된다. 소유자와 관리자는 사용자를 추가·제거하고 `viewer` 또는 `editor` 권한을 지정할 수 있다. `viewer`는 조회·다운로드만, `editor`는 해당 폴더와 하위 폴더를 관리할 수 있다.
 

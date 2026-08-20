@@ -18,7 +18,7 @@ export function buildGoogleAuthorizeUrl(options: GoogleAuthorizeOptions): string
       ...(requestDriveAccess
         ? [
             'https://www.googleapis.com/auth/drive.file',
-            'https://www.googleapis.com/auth/drive.metadata.readonly'
+            'https://www.googleapis.com/auth/drive.readonly'
           ]
         : [])
     ].join(' '),

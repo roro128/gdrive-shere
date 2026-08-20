@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildActiveUploadSessionRecord,
   buildCompletedUploadPersistence,
+  isActiveUploadSession,
   isCompletedUploadResponse,
   normalizeUploadSessionInput,
   resolveReceivedBytes,
@@ -14,6 +15,18 @@ import {
 } from './upload-session-model';
 
 describe('upload session model', () => {
+  it('allows writes only for unexpired active sessions', () => {
+    expect(
+      isActiveUploadSession('active', '2026-08-01T00:00:00.000Z', '2026-07-31T23:59:59.000Z')
+    ).toBe(true);
+    expect(
+      isActiveUploadSession('active', '2026-07-31T23:59:59.000Z', '2026-08-01T00:00:00.000Z')
+    ).toBe(false);
+    expect(
+      isActiveUploadSession('complete', '2026-08-02T00:00:00.000Z', '2026-08-01T00:00:00.000Z')
+    ).toBe(false);
+  });
+
   it('normalizes valid input and applies the MIME default', () => {
     const input = {
       name: 'video.mp4',

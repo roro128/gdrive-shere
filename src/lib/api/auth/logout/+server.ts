@@ -1,8 +1,10 @@
 import type { RequestHandler } from '$lib/server/runtime';
 import { destroySession } from '$lib/server/auth';
 import { createBetterAuth } from '$lib/server/better-auth';
+import { assertSameOrigin } from '$lib/server/http';
 
 export const POST: RequestHandler = async (event) => {
+  assertSameOrigin(event.request, event.url.origin);
   const betterAuthLogout = await createBetterAuth(event).handler(
     new Request(new URL('/api/auth/sign-out', event.url.origin), {
       method: 'POST',

@@ -69,32 +69,25 @@ function compareValues(left: number | string, right: number | string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function compareWorkspaceFiles(
-  left: WorkspaceFileModel,
-  right: WorkspaceFileModel,
-  sortBy: WorkspaceSortKey,
-  descending: boolean
-): number {
-  const folderOrder =
-    Number(isFolderMimeType(right.mimeType)) - Number(isFolderMimeType(left.mimeType));
-  if (folderOrder) return folderOrder;
-
-  const comparison = compareValues(comparableValue(left, sortBy), comparableValue(right, sortBy));
-  return descending ? -comparison : comparison;
-}
-
 export function sortWorkspaceFiles<T extends WorkspaceFileModel>(
   files: readonly T[],
   sortBy: WorkspaceSortKey,
   descending: boolean
 ): T[] {
   return files
-    .map((file, originalIndex) => ({ file, originalIndex }))
-    .sort(
-      (left, right) =>
-        compareWorkspaceFiles(left.file, right.file, sortBy, descending) ||
-        left.originalIndex - right.originalIndex
-    )
+    .map((file, originalIndex) => ({
+      file,
+      originalIndex,
+      isFolder: isFolderMimeType(file.mimeType),
+      value: comparableValue(file, sortBy)
+    }))
+    .sort((left, right) => {
+      const folderOrder = Number(right.isFolder) - Number(left.isFolder);
+      if (folderOrder) return folderOrder;
+
+      const comparison = compareValues(left.value, right.value);
+      return (descending ? -comparison : comparison) || left.originalIndex - right.originalIndex;
+    })
     .map(({ file }) => file);
 }
 
@@ -108,13 +101,12 @@ function partitionByMembership<T>(
   memberIds: ReadonlySet<string>,
   getId: (item: T) => string
 ): [T[], T[]] {
-  return items.reduce<[T[], T[]]>(
-    ([members, nonMembers], item) =>
-      memberIds.has(getId(item))
-        ? [members.concat(item), nonMembers]
-        : [members, nonMembers.concat(item)],
-    [[], []]
-  );
+  const members: T[] = [];
+  const nonMembers: T[] = [];
+  for (const item of items) {
+    (memberIds.has(getId(item)) ? members : nonMembers).push(item);
+  }
+  return [members, nonMembers];
 }
 
 export function summarizeActiveUploads(uploads: readonly UploadProgressModel[]) {

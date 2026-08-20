@@ -1,15 +1,27 @@
 import { readResponseMessage } from './response-message';
+import type { GoogleConnectionStatus } from './google-connection-status';
 
 type AuthRequest = (input: string, init?: RequestInit) => Promise<Response>;
 
 export async function fetchCurrentUser<T>(request: AuthRequest = fetch): Promise<{
   user: T | null;
   googleConnected: boolean;
+  googleConnectionStatus: GoogleConnectionStatus;
 } | null> {
   const response = await request('/api/me');
   if (!response.ok) return null;
-  const value = (await response.json()) as { user?: T | null; googleConnected?: boolean };
-  return { user: value.user ?? null, googleConnected: value.googleConnected === true };
+  const value = (await response.json()) as {
+    user?: T | null;
+    googleConnected?: boolean;
+    googleConnectionStatus?: GoogleConnectionStatus;
+  };
+  const googleConnectionStatus =
+    value.googleConnectionStatus ?? (value.googleConnected === true ? 'connected' : 'missing');
+  return {
+    user: value.user ?? null,
+    googleConnected: googleConnectionStatus === 'connected',
+    googleConnectionStatus
+  };
 }
 
 export async function logout(request: AuthRequest = fetch): Promise<void> {

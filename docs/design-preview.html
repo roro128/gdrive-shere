@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GShare design tokens</title>
+    <style>
+      :root {
+        font-family: system-ui, sans-serif;
+        color: #18211b;
+        background: #f7f9f5;
+      }
+      body {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 48px 24px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+      }
+      p {
+        color: #647169;
+      }
+      section {
+        margin-top: 32px;
+      }
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+      }
+      .swatch {
+        min-height: 88px;
+        border: 1px solid #d9e2d9;
+        border-radius: 8px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .swatch span:last-child {
+        font:
+          12px ui-monospace,
+          monospace;
+        opacity: 0.72;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        padding: 20px;
+        border: 1px solid #d9e2d9;
+        border-radius: 12px;
+        background: #fff;
+      }
+      button {
+        min-height: 40px;
+        border: 1px solid #d9e2d9;
+        border-radius: 6px;
+        padding: 0 16px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .primary {
+        border-color: #b8dc3b;
+        color: #1d2a10;
+        background: #b8dc3b;
+      }
+      .secondary {
+        color: #344239;
+        background: #eef2eb;
+      }
+      .danger {
+        border-color: #c64c40;
+        color: #fff7f5;
+        background: #c64c40;
+      }
+      .tag {
+        border-color: #d9e2d9;
+        color: #35480e;
+        background: #eff7c9;
+      }
+      @media (max-width: 480px) {
+        body {
+          padding: 28px 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GShare light lime</h1>
+    <p>파일을 찾고 정리하는 화면을 위해 밝은 표면과 제한된 라임 포인트를 사용합니다.</p>
+    <section>
+      <h2>색상 토큰</h2>
+      <div class="swatches">
+        <div class="swatch" style="background: #f7f9f5">
+          <span>background</span><span>#F7F9F5</span>
+        </div>
+        <div class="swatch" style="background: #18211b; color: #fff">
+          <span>foreground</span><span>#18211B</span>
+        </div>
+        <div class="swatch" style="background: #fff"><span>card</span><span>#FFFFFF</span></div>
+        <div class="swatch" style="background: #b8dc3b">
+          <span>primary</span><span>#B8DC3B</span>
+        </div>
+        <div class="swatch" style="background: #eff7c9">
+          <span>accent</span><span>#EFF7C9</span>
+        </div>
+        <div class="swatch" style="background: #d9e2d9">
+          <span>border</span><span>#D9E2D9</span>
+        </div>
+        <div class="swatch" style="background: #c64c40; color: #fff">
+          <span>destructive</span><span>#C64C40</span>
+        </div>
+        <div class="swatch" style="background: #2f7d56; color: #fff">
+          <span>success</span><span>#2F7D56</span>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>공통 동작</h2>
+      <div class="controls">
+        <button class="primary">업로드</button>
+        <button class="secondary">새 폴더</button>
+        <button class="danger">삭제</button>
+        <button class="tag">선택됨</button>
+      </div>
+    </section>
+  </body>
+</html>

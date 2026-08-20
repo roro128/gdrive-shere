@@ -4,6 +4,10 @@ import { isMockWorkspace } from '../../src/lib/mock-workspace';
 import { isValidPasswordConfirmation, toPasswordResetRequest } from '../../src/lib/auth-form-model';
 import { fetchPasswordResetContext } from '../../src/lib/password-reset-client';
 import { resetPassword } from '../../src/lib/auth-client';
+import { Button } from '../../src/lib/components/ui/button';
+import { Card } from '../../src/lib/components/ui/card';
+import { Input } from '../../src/lib/components/ui/input';
+import { Label } from '../../src/lib/components/ui/label';
 import {
   initialPasswordResetFormState,
   passwordResetFormReducer
@@ -59,7 +63,7 @@ export default function Reset() {
   }
   return (
     <main className="auth-shell">
-      <section className="auth-card">
+      <Card className="auth-card">
         <p className="eyebrow">PASSWORD RESET</p>
         <h1>비밀번호 변경</h1>
         {context === null ? (
@@ -73,9 +77,9 @@ export default function Reset() {
               <strong>{context.handle ? `@${context.handle}` : 'GShare 멤버'}</strong>
               {context.loginId && <small>로그인 ID · {context.loginId}</small>}
             </div>
-            <label className="form-field">
+            <Label className="form-field">
               <span>새 비밀번호</span>
-              <input
+              <Input
                 required
                 minLength={8}
                 type="password"
@@ -83,10 +87,10 @@ export default function Reset() {
                 value={password}
                 onChange={(event) => dispatch({ type: 'set-password', value: event.target.value })}
               />
-            </label>
-            <label className="form-field">
+            </Label>
+            <Label className="form-field">
               <span>새 비밀번호 확인</span>
-              <input
+              <Input
                 required
                 minLength={8}
                 type="password"
@@ -96,17 +100,17 @@ export default function Reset() {
                   dispatch({ type: 'set-confirmation', value: event.target.value })
                 }
               />
-            </label>
-            <button className="primary-button" disabled={busy || completed} type="submit">
+            </Label>
+            <Button className="primary-button" disabled={busy || completed} type="submit">
               {busy ? '변경 중…' : completed ? '변경 완료' : '변경하기'}
-            </button>
+            </Button>
             {message && <p className="muted">{message}</p>}
           </form>
         )}
         <a className="secondary-button" href={mockMode ? '/?mock=1' : '/'}>
           로그인으로 돌아가기
         </a>
-      </section>
+      </Card>
     </main>
   );
 }

@@ -43,6 +43,20 @@ describe('API route parameter extraction', () => {
     expect(matched?.params).toEqual({ id: 'example' });
   });
 
+  it('keeps the public share preview route ahead of the download route', () => {
+    const routes = buildApiRoutes({
+      '../api/share-links/[token]/+server.ts': { GET: 'download' },
+      '../api/share-links/[token]/preview/+server.ts': { GET: 'preview' }
+    });
+
+    expect(matchApiRoute(routes, '/api/share-links/share-token/preview')?.route.module.GET).toBe(
+      'preview'
+    );
+    expect(matchApiRoute(routes, '/api/share-links/share-token')?.route.module.GET).toBe(
+      'download'
+    );
+  });
+
   it('merges external parameters without allowing undefined values through', () => {
     expect(
       mergeApiRouteParams({ fromLoader: 'yes', ignored: undefined }, { id: 'file-1' })

@@ -47,6 +47,18 @@ describe('workspace navigation reducer', () => {
     expect(root.folderId).toBeNull();
   });
 
+  it('does not append the current folder again when repeated clicks dispatch before rendering', () => {
+    const child = folder('child');
+    const opened = workspaceNavigationReducer(initialWorkspaceNavigation<Folder>(), {
+      type: 'open-folder',
+      folder: child
+    });
+    const repeated = workspaceNavigationReducer(opened, { type: 'open-folder', folder: child });
+
+    expect(repeated).toBe(opened);
+    expect(repeated.folderPath).toEqual([child]);
+  });
+
   it('removes selection and its anchor only for requested ids', () => {
     const state = {
       ...initialWorkspaceNavigation<Folder>(),

@@ -35,7 +35,7 @@ Google Drive를 저장소로 사용하며, 초대받은 사용자만 파일을 �
 - 같은 이름의 파일은 건너뛰기·교체·덮어쓰기와 일괄 적용 선택
 - 8MiB chunk, 진행률, 재시도, 취소 및 화면을 옮겨도 유지되는 업로드 현황
 - 이미지·동영상·오디오·PDF·텍스트 미리보기와 인증된 다운로드
-- 검은색 파일 작업공간 UI와 모바일 레이아웃
+- 밝은 파일 작업공간 UI와 모바일 레이아웃
 
 ## 기술 구조
 
@@ -102,7 +102,7 @@ bun run build
 실행한 뒤 `?mock=1`을 붙입니다.
 
 ```powershell
-bun run dev -- --host 127.0.0.1 --port 4192
+bun run dev:mock
 ```
 
 `http://127.0.0.1:4192/?mock=1`에서 업로드, 파일 선택·정렬, 미리보기, 새 폴더 생성,
@@ -128,6 +128,28 @@ bun run dev -- --host 127.0.0.1 --port 4192
 API가 필요합니다.
 
 이전 점검의 변경 상태를 버리고 처음부터 다시 확인하려면 `?mock=1&mockReset=1`로 접속합니다.
+
+### Mock 브라우저 스모크 테스트
+
+브라우저에서 실제 파일 선택 이벤트까지 자동으로 확인하려면 Chromium을 한 번 설치한 뒤
+스모크 테스트를 실행합니다. `test:e2e`는 Vite·Cloudflare·D1 서버를 시작하지 않고,
+`test:e2e:fixture`가 번들한 Home 화면을 Playwright route interception으로 제공합니다. 업로드
+파일은 mock workspace 메모리에만 저장되며 Google Drive와 D1에는 기록되지 않습니다.
+
+```powershell
+bun x playwright install chromium
+bun run test:e2e
+```
+
+브라우저 창을 직접 보면서 같은 테스트를 실행하려면 다음을 사용합니다.
+
+```powershell
+bun run test:e2e:headed
+```
+
+테스트는 파일 업로드·미리보기·중복 업로드 건너뛰기, 폴더 생성·이름 변경·중복 폴더 오류,
+폴더 탐색, 휴지통 복구, viewer 읽기 전용, 관리자 초대 화면을 확인합니다. 실패 시
+`test-results/`에 trace·screenshot·video가 남습니다.
 
 `bun install`은 Lefthook의 `pre-commit`·`pre-push` 훅도 설치합니다. 커밋 전에는
 포맷 검사, Biome·ESLint 린트, React Router 타입 생성·TypeScript 검사, Knip 데드코드 검사, Vitest를 순서대로
@@ -222,14 +244,18 @@ Google Web OAuth Client 자체는 Google Console에서 한 번 생성해야 합�
 - 사용자는 비밀번호 또는 등록한 패스키로 로그인할 수 있습니다.
 - 원본 Drive session URL은 브라우저에 반환하지 않습니다.
 - 앱이 생성한 전용 폴더 밖의 파일은 목록에 포함하지 않습니다.
+- Google OAuth는 `email_verified`와 허용 관리자 목록을 함께 확인하며 Drive 재연결은 기존 Google subject와 일치해야 합니다.
 - 초대 링크는 해시만 저장하며 24시간 후 또는 사용 즉시 무효화합니다.
 - 비밀번호 변경 링크는 관리자가 활성 멤버를 선택해 즉시 발급하거나 분실 요청을 처리해 발급할 수 있으며, 해시만 저장하고 1시간 후 또는 사용 즉시 무효화합니다.
 - 다운로드 응답은 `private, no-store`로 전달합니다.
+- 공개 링크 토큰은 `no-referrer`로 외부에 전달하지 않으며 inline 텍스트는 `text/plain`으로 제공합니다.
 
 ## 테스트 범위
 
 ```powershell
 bun run check
+bun audit --audit-level=high
+bun run security:public
 bun run lint:biome
 bun run lint
 bun run lint:dead

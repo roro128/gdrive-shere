@@ -374,6 +374,24 @@ export const passwordResetLinks = sqliteTable(
   })
 );
 
+export const shareLinks = sqliteTable(
+  'share_links',
+  {
+    id: text('id').primaryKey(),
+    drive_file_id: text('drive_file_id').notNull(),
+    token_hash: text('token_hash').notNull(),
+    created_by: text('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    created_at: text('created_at').notNull(),
+    revoked_at: text('revoked_at')
+  },
+  (table) => ({
+    tokenUnique: uniqueIndex('share_links_token_unique').on(table.token_hash),
+    fileIndex: index('idx_share_links_file').on(table.drive_file_id, table.revoked_at)
+  })
+);
+
 export const appSchema = {
   users,
   passkeys,
@@ -389,6 +407,7 @@ export const appSchema = {
   settings,
   auditEvents,
   passwordResetRequests,
-  passwordResetLinks
+  passwordResetLinks,
+  shareLinks
 };
 export const schema = { ...authSchema, ...appSchema };

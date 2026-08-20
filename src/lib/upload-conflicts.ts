@@ -27,18 +27,23 @@ export function splitUploadConflicts<
   isFolder: (file: TExisting) => boolean,
   targetParentId: string | null
 ): { ready: TFile[]; conflicts: UploadConflict<TFile, TExisting>[] } {
-  return incoming.reduce(
-    (result, file) => {
-      const existing = existingFiles.find(
-        (item) => !isFolder(item) && item.name.toLocaleLowerCase() === file.name.toLocaleLowerCase()
-      );
-      return existing
-        ? {
-            ...result,
-            conflicts: [...result.conflicts, { file, existing, targetParentId }]
-          }
-        : { ...result, ready: [...result.ready, file] };
-    },
-    { ready: [] as TFile[], conflicts: [] as UploadConflict<TFile, TExisting>[] }
-  );
+  const seenIncomingNames = new Set<string>();
+  const existingByName = new Map<string, TExisting>();
+  for (const item of existingFiles) {
+    if (isFolder(item)) continue;
+    const normalizedName = item.name.toLocaleLowerCase();
+    if (!existingByName.has(normalizedName)) existingByName.set(normalizedName, item);
+  }
+
+  const ready: TFile[] = [];
+  const conflicts: UploadConflict<TFile, TExisting>[] = [];
+  for (const file of incoming) {
+    const normalizedName = file.name.toLocaleLowerCase();
+    if (seenIncomingNames.has(normalizedName)) continue;
+    seenIncomingNames.add(normalizedName);
+    const existing = existingByName.get(normalizedName);
+    if (existing) conflicts.push({ file, existing, targetParentId });
+    else ready.push(file);
+  }
+  return { ready, conflicts };
 }

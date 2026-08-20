@@ -3,27 +3,25 @@ min_version: 2.1.0
 pre-commit:
   parallel: false
   commands:
+    security-leakage:
+      run: bun run security:public
     format:
-      glob: '**/*'
       run: bun run format:check
     biome:
-      glob: '**/*'
       run: bun run lint:biome
     eslint:
-      glob: '**/*'
       run: bun run lint
     typecheck:
-      glob: '**/*'
       run: bun run typecheck
     dead-code:
-      glob: '**/*'
       run: bun run lint:dead
     test:
-      glob: '**/*'
       run: bun run test
 
 pre-push:
   parallel: false
   commands:
+    security-leakage:
+      run: bun run security:public
     quality:
       run: bun run quality

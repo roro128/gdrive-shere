@@ -1,5 +1,5 @@
 import type { RequestHandler } from '$lib/server/runtime';
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { requireUser } from '$lib/server/auth';
 import { database, now, type UserRow } from '$lib/server/db';
 import { trashDriveFile, updateDriveFile } from '$lib/server/google';
@@ -8,6 +8,7 @@ import {
   driveFiles,
   folderShareInvitations,
   folderShares,
+  shareLinks,
   userSpaces
 } from '$lib/server/drizzle/auth-schema';
 import { requireEditor, requireFileAccess, requireFolderAccess } from '$lib/server/space-access';
@@ -135,10 +136,17 @@ export const DELETE: RequestHandler = async (event) => {
   if (file.mime_type === 'application/vnd.google-apps.folder')
     await assertNotSharedFolder(event, file.drive_file_id);
   const updated = await trashDriveFile(event, file.drive_file_id, true);
-  await database(event)
-    .update(driveFiles)
-    .set(toTrashStateUpdate(true, now()))
-    .where(eq(driveFiles.drive_file_id, file.drive_file_id))
-    .run();
+  const trashedAt = now();
+  const db = database(event);
+  await db.batch([
+    db
+      .update(driveFiles)
+      .set(toTrashStateUpdate(true, trashedAt))
+      .where(eq(driveFiles.drive_file_id, file.drive_file_id)),
+    db
+      .update(shareLinks)
+      .set({ revoked_at: trashedAt })
+      .where(and(eq(shareLinks.drive_file_id, file.drive_file_id), isNull(shareLinks.revoked_at)))
+  ]);
   return ok({ file: updated });
 };

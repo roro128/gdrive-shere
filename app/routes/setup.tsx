@@ -1,7 +1,9 @@
+import { Card } from '../../src/lib/components/ui/card';
+
 export default function Setup() {
   return (
     <main className="auth-shell">
-      <section className="auth-card">
+      <Card className="auth-card">
         <p className="eyebrow">INITIAL SETUP</p>
         <h1>Google Drive 연결</h1>
         <p className="muted">
@@ -10,7 +12,7 @@ export default function Setup() {
         <a className="primary-button" href="/api/auth/google/start?mode=setup">
           Google로 연결
         </a>
-      </section>
+      </Card>
     </main>
   );
 }

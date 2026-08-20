@@ -6,6 +6,7 @@ export default [
   route('setup', './routes/setup.tsx'),
   route('invite/:token', './routes/invite.tsx'),
   route('reset/:token', './routes/reset.tsx'),
+  route('share/:token', './routes/share.tsx'),
   route('api/*', './routes/api.ts'),
   route('*', './routes/not-found.tsx')
 ] satisfies RouteConfig;

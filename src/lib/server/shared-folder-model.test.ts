@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOwnedSharedFolderListing,
+  buildOwnedSharedFolderListings,
   decorateOwnedSharedFolder,
   mergeSharedFolderListings,
   toSharedWithNames,
@@ -118,5 +119,22 @@ describe('shared folder model', () => {
     const rows = [{ displayName: 'Ada' }, { displayName: 'Grace' }];
     expect(toSharedWithNames(rows)).toEqual(['Ada', 'Grace']);
     expect(rows).toEqual([{ displayName: 'Ada' }, { displayName: 'Grace' }]);
+  });
+
+  it('groups recipients once when building multiple owned shared folders', () => {
+    const folders = [folder, { ...folder, id: 'folder-2', name: 'Other' }];
+    const recipients = [
+      { folderId: 'folder-1', displayName: 'Ada' },
+      { folderId: 'folder-1', displayName: 'Grace' },
+      { folderId: 'folder-2', displayName: 'Lin' },
+      { folderId: 'unknown', displayName: 'Ignored' }
+    ];
+    const snapshot = structuredClone(recipients);
+
+    expect(buildOwnedSharedFolderListings(folders, 'Owner', recipients)).toMatchObject([
+      { id: 'folder-1', sharedWithCount: 2, sharedWithNames: ['Ada', 'Grace'] },
+      { id: 'folder-2', sharedWithCount: 1, sharedWithNames: ['Lin'] }
+    ]);
+    expect(recipients).toEqual(snapshot);
   });
 });

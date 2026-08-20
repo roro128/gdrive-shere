@@ -1,7 +1,7 @@
 import type { LinksFunction, MetaFunction } from 'react-router';
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from 'react-router';
-import '../src/app.css';
 import '../src/ui-refresh.css';
+import '../src/app.css';
 
 export const meta: MetaFunction = () => [
   { title: 'GShare' },

@@ -7,7 +7,7 @@ import { and, eq, ne, or } from 'drizzle-orm';
 import { badRequest, assertSameOrigin, ok, unauthorized } from '$lib/server/http';
 import { readJson } from '$lib/server/http';
 import { createBetterAuth } from '$lib/server/better-auth';
-import { driveConnected } from '$lib/server/google';
+import { getGoogleConnectionStatus } from '$lib/server/google';
 import { defaultAvatarUrl } from '$lib/server/avatar';
 import { toProfileUser } from '$lib/user-profile';
 import { isValidPasswordLength } from '$lib/password-policy';
@@ -20,9 +20,11 @@ import {
 
 export const GET: RequestHandler = async (event) => {
   const user = await currentUser(event);
+  const googleConnectionStatus = user ? await getGoogleConnectionStatus(event) : 'missing';
   return ok({
     user: user ? toProfileUser(user) : null,
-    googleConnected: user ? await driveConnected(event) : false
+    googleConnected: googleConnectionStatus === 'connected',
+    googleConnectionStatus
   });
 };
 

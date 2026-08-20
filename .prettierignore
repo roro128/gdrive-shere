@@ -3,3 +3,9 @@ terraform/**/*.tfstate.*
 terraform/**/*.tfvars
 .codex-chrome-profile/**
 .codex-chrome-profile-gshare/**
+test-results/**
+playwright-report/**
+.react-router/**
+dist/**
+build/**
+.e2e-fixture/**

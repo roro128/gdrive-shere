@@ -6,6 +6,7 @@ describe('file response model', () => {
     expect(buildFileResponseHeaders('', '보고서 1.pdf', 'attachment')).toEqual({
       'content-type': 'application/octet-stream',
       'content-disposition': "attachment; filename*=UTF-8''%EB%B3%B4%EA%B3%A0%EC%84%9C%201.pdf",
+      'x-content-type-options': 'nosniff',
       'cache-control': 'private, no-store'
     });
   });
@@ -15,8 +16,16 @@ describe('file response model', () => {
     expect(buildFileResponseHeaders('image/png', fileName, 'inline')).toEqual({
       'content-type': 'image/png',
       'content-disposition': "inline; filename*=UTF-8''image.png",
+      'x-content-type-options': 'nosniff',
       'cache-control': 'private, no-store'
     });
     expect(fileName).toBe('image.png');
+  });
+
+  it('serves HTML-looking text as plain text in an inline preview', () => {
+    expect(buildFileResponseHeaders('text/html', 'note.html', 'inline')).toMatchObject({
+      'content-type': 'text/plain; charset=utf-8',
+      'x-content-type-options': 'nosniff'
+    });
   });
 });

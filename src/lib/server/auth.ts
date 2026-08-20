@@ -442,7 +442,12 @@ export async function verifyAuthentication(
   return user;
 }
 
-export function assertGoogleAdminEmail(event: RequestEvent, email: string | null): void {
+export function assertGoogleAdminEmail(
+  event: RequestEvent,
+  email: string | null,
+  emailVerified: boolean
+): void {
+  if (!emailVerified) forbidden('Google 계정 이메일 확인이 필요합니다.');
   const allowed = normalizeAllowedEmails(env(event).GOOGLE_ADMIN_EMAILS ?? '');
   if (!allowed.length) forbidden('허용된 Google 관리자 계정이 설정되지 않았습니다.');
   if (!isAllowedEmail(allowed, email)) forbidden('허용되지 않은 Google 관리자 계정입니다.');
@@ -459,17 +464,24 @@ export async function findAdminByGoogleSubject(
   return (await database(event)
     .select()
     .from(users)
-    .where(and(eq(users.role, 'admin'), eq(users.google_subject, subject)))
+    .where(
+      and(eq(users.role, 'admin'), eq(users.status, 'active'), eq(users.google_subject, subject))
+    )
     .get()) as UserRow | null;
 }
 
 export async function createAdminFromGoogle(
   event: RequestEvent,
-  profile: { subject: string; email: string | null; name: string | null }
+  profile: {
+    subject: string;
+    email: string | null;
+    emailVerified: boolean;
+    name: string | null;
+  }
 ): Promise<UserRow> {
   if (await hasUsers(event)) forbidden('초기 관리자 계정은 이미 생성되었습니다.');
   if (!profile.subject || !profile.email) badRequest('Google 계정 이메일을 확인할 수 없습니다.');
-  assertGoogleAdminEmail(event, profile.email);
+  assertGoogleAdminEmail(event, profile.email, profile.emailVerified);
   const user = buildGoogleAdminUser(
     {
       subject: profile.subject,

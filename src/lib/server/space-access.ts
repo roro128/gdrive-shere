@@ -1,5 +1,5 @@
 import type { RequestEvent } from '$lib/server/runtime';
-import { and, eq, ne, or, desc, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, or, sql } from 'drizzle-orm';
 import { database, newId, now, recordAudit, type DriveFileRow, type UserRow } from './db';
 import { createDriveFolder, ensureRootFolder } from './google';
 import { badRequest, forbidden, notFound } from './http';
@@ -17,7 +17,7 @@ import {
   selectEligibleShareIds
 } from '../share-management';
 import { collectAccessPath, resolveFileAccess, type SpacePermission } from './space-access-model';
-import { buildOwnedSharedFolderListing, mergeSharedFolderListings } from './shared-folder-model';
+import { buildOwnedSharedFolderListings, mergeSharedFolderListings } from './shared-folder-model';
 import { buildFolderShareMutations, buildShareInvitationResponse } from './share-persistence-model';
 import { buildUserSpaceCreationRecords } from './db-record-model';
 
@@ -196,35 +196,49 @@ export async function listSharedFolders(event: RequestEvent, user: UserRow) {
     )
     .all();
 
-  const ownedShared = await Promise.all(
-    owned.map(async (folder) => {
-      const [accepted, pending] = await Promise.all([
+  const [accepted, pending] = owned.length
+    ? await Promise.all([
         database(event)
-          .select({ displayName: users.display_name })
+          .select({ folderId: folderShares.folder_drive_id, displayName: users.display_name })
           .from(folderShares)
+          .innerJoin(driveFiles, eq(driveFiles.drive_file_id, folderShares.folder_drive_id))
           .innerJoin(users, eq(users.id, folderShares.user_id))
-          .where(eq(folderShares.folder_drive_id, folder.id))
+          .where(
+            and(
+              eq(driveFiles.owner_user_id, user.id),
+              eq(driveFiles.mime_type, FOLDER_MIME),
+              eq(driveFiles.trashed, 0)
+            )
+          )
           .all(),
         database(event)
-          .select({ displayName: users.display_name })
+          .select({
+            folderId: folderShareInvitations.folder_drive_id,
+            displayName: users.display_name
+          })
           .from(folderShareInvitations)
+          .innerJoin(
+            driveFiles,
+            eq(driveFiles.drive_file_id, folderShareInvitations.folder_drive_id)
+          )
           .innerJoin(users, eq(users.id, folderShareInvitations.invited_user_id))
           .where(
             and(
-              eq(folderShareInvitations.folder_drive_id, folder.id),
+              eq(driveFiles.owner_user_id, user.id),
+              eq(driveFiles.mime_type, FOLDER_MIME),
+              eq(driveFiles.trashed, 0),
               eq(folderShareInvitations.status, 'pending')
             )
           )
           .all()
-      ]);
-      return buildOwnedSharedFolderListing(folder, user.display_name, accepted, pending);
-    })
-  );
+      ])
+    : [[], []];
+  const ownedShared = buildOwnedSharedFolderListings(owned, user.display_name, [
+    ...accepted,
+    ...pending
+  ]);
 
-  return mergeSharedFolderListings(
-    received,
-    ownedShared.filter((folder): folder is NonNullable<typeof folder> => folder !== null)
-  );
+  return mergeSharedFolderListings(received, ownedShared);
 }
 
 export async function listAdminSpaces(event: RequestEvent, admin: UserRow) {

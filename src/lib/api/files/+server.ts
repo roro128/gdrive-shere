@@ -13,9 +13,8 @@ import {
 } from '$lib/server/drizzle/auth-schema';
 import { ensureUserSpace, requireFolderAccess } from '$lib/server/space-access';
 import {
-  buildDriveFileSyncInputs,
+  buildChangedDriveFileSyncOperations,
   collectSharedFolderIds,
-  buildDriveFileSyncOperations,
   decorateListedFiles,
   folderIdsForSharedLookup,
   mapTrashedFiles
@@ -69,9 +68,36 @@ export const GET: RequestHandler = async (event) => {
   const parentAccess = await requireFolderAccess(event, user, parentId);
   const search = event.url.searchParams.get('search') ?? '';
   const files = await listDriveFiles(event, parentId, search);
-  const syncOperations = buildDriveFileSyncOperations(
-    buildDriveFileSyncInputs(files, { newId, now }),
-    { parentId, ownerUserId: parentAccess.ownerUserId, createdBy: user.id }
+  const parentRows = await database(event)
+    .select({
+      id: driveFiles.id,
+      drive_file_id: driveFiles.drive_file_id,
+      name: driveFiles.name,
+      mime_type: driveFiles.mime_type,
+      size_bytes: driveFiles.size_bytes,
+      parent_drive_id: driveFiles.parent_drive_id,
+      owner_user_id: driveFiles.owner_user_id,
+      trashed: driveFiles.trashed,
+      created_by: driveFiles.created_by,
+      created_at: driveFiles.created_at,
+      updated_at: driveFiles.updated_at,
+      uploadedBy: users.display_name,
+      uploadedAt: driveFiles.created_at
+    })
+    .from(driveFiles)
+    .leftJoin(users, eq(users.id, driveFiles.created_by))
+    .where(eq(driveFiles.parent_drive_id, parentId))
+    .all();
+  const syncOperations = buildChangedDriveFileSyncOperations(
+    files,
+    new Map(parentRows.map((row) => [row.drive_file_id, row])),
+    {
+      parentId,
+      ownerUserId: parentAccess.ownerUserId,
+      createdBy: user.id,
+      newId,
+      now
+    }
   );
   if (syncOperations.length) {
     const db = database(event);
@@ -84,16 +110,26 @@ export const GET: RequestHandler = async (event) => {
     const [first, ...rest] = queries;
     if (first) await db.batch([first, ...rest] as [typeof first, ...typeof rest]);
   }
-  const metadata = await database(event)
-    .select({
-      id: driveFiles.drive_file_id,
-      uploadedBy: users.display_name,
-      uploadedAt: driveFiles.created_at
-    })
-    .from(driveFiles)
-    .leftJoin(users, eq(users.id, driveFiles.created_by))
-    .where(eq(driveFiles.parent_drive_id, parentId))
-    .all();
+  const metadataById = new Map(
+    parentRows.map((row) => [
+      row.drive_file_id,
+      {
+        id: row.drive_file_id,
+        uploadedBy: row.uploadedBy,
+        uploadedAt: row.uploadedAt
+      }
+    ])
+  );
+  for (const operation of syncOperations) {
+    if (!metadataById.has(operation.values.drive_file_id)) {
+      metadataById.set(operation.values.drive_file_id, {
+        id: operation.values.drive_file_id,
+        uploadedBy: user.display_name,
+        uploadedAt: operation.values.created_at
+      });
+    }
+  }
+  const metadata = [...metadataById.values()];
   const folderIds = folderIdsForSharedLookup(files);
   const sharedFolderIds = folderIds.length
     ? await (async () => {

@@ -33,13 +33,18 @@ export const GET: RequestHandler = async (event) => {
       await createAdminFromGoogle(event, {
         subject: connection.subject ?? '',
         email: connection.email,
+        emailVerified: connection.emailVerified,
         name: connection.name
       });
     } else if (mode === 'connect') {
       const user = await currentUser(event);
       if (user?.role !== 'admin') forbidden('관리자 로그인이 필요합니다.');
+      if (!user.google_subject || connection.subject !== user.google_subject)
+        forbidden('현재 관리자 Google 계정으로만 Drive를 다시 연결할 수 있습니다.');
+      assertGoogleAdminEmail(event, connection.email, connection.emailVerified);
     } else {
-      if (plan.requireAdminEmail) assertGoogleAdminEmail(event, connection.email);
+      if (plan.requireAdminEmail)
+        assertGoogleAdminEmail(event, connection.email, connection.emailVerified);
       const user = connection.subject
         ? await findAdminByGoogleSubject(event, connection.subject)
         : null;
@@ -55,15 +60,10 @@ export const GET: RequestHandler = async (event) => {
     }
     return new Response(null, { status: 302, headers: { location: '/?connected=1' } });
   } catch (cause) {
-    const authError = cause as { status?: number; body?: { message?: string } };
-    if (authError.status) {
-      return new Response(authError.body?.message ?? 'Google 관리자 인증이 거부되었습니다.', {
-        status: authError.status
-      });
-    }
-    return new Response(
-      `Google 연결 실패: ${cause instanceof Error ? cause.message : 'unknown error'}`,
-      { status: 502 }
-    );
+    if (cause instanceof Response) return cause;
+    return new Response('Google 연결을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.', {
+      status: 502,
+      headers: { 'cache-control': 'no-store' }
+    });
   }
 };

@@ -57,6 +57,7 @@ export function workspaceNavigationReducer<TFolder extends NavigationFolder>(
         search: ''
       });
     case 'open-folder':
+      if (state.folderId === action.folder.id) return state;
       return resetSelection({
         ...state,
         folderId: action.folder.id,

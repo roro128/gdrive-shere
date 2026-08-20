@@ -44,7 +44,7 @@ describe('OAuth mode model', () => {
     expect(resolveGoogleOAuthCallbackPlan('connect')).toEqual({
       createSession: false,
       persistConnection: true,
-      requireAdminEmail: false
+      requireAdminEmail: true
     });
   });
 });

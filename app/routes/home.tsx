@@ -1,5 +1,13 @@
-import { Fragment, useEffect, useReducer, useRef, type DragEvent, type PointerEvent } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type DragEvent,
+  type PointerEvent
+} from 'react';
 import { authClient } from '../../src/lib/client';
 import {
   createMemberInvitation,
@@ -69,6 +77,8 @@ import {
   respondToShareInvitation,
   saveFolderShares
 } from '../../src/lib/share-client';
+import { createShareLink } from '../../src/lib/share-link-client';
+import type { GoogleConnectionStatus } from '../../src/lib/google-connection-status';
 import {
   fetchCurrentUser,
   logout as logoutAuth,
@@ -171,6 +181,33 @@ import {
   trashMockFile,
   uploadMockFile
 } from '../../src/lib/mock-workspace';
+import { AppShellSkeleton, TableSkeleton } from '../../src/lib/components/skeleton';
+import { FileIcon } from '../../src/lib/components/file-icon';
+import { ToastView } from '../../src/lib/components/toast-view';
+import { FloatingActionBar } from '../../src/lib/components/floating-action-bar';
+import { Button as UiButton } from '../../src/lib/components/ui/button';
+import { Card as UiCard } from '../../src/lib/components/ui/card';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '../../src/lib/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '../../src/lib/components/ui/dialog';
+import { Input as UiInput } from '../../src/lib/components/ui/input';
+import { Label as UiLabel } from '../../src/lib/components/ui/label';
+import { initialToastState, toastReducer, type ToastType } from '../../src/lib/toast-model';
 
 type User = {
   id?: string;
@@ -180,6 +217,7 @@ type User = {
   loginId?: string | null;
   avatarUrl?: string | null;
   googleConnected?: boolean;
+  googleConnectionStatus?: GoogleConnectionStatus;
   status?: 'active' | 'disabled';
 };
 type FileItem = {
@@ -313,7 +351,13 @@ export default function Home() {
       .then((value) =>
         dispatchSession({
           type: 'finish-loading',
-          user: value?.user ? { ...value.user, googleConnected: value.googleConnected } : null
+          user: value?.user
+            ? {
+                ...value.user,
+                googleConnected: value.googleConnected,
+                googleConnectionStatus: value.googleConnectionStatus
+              }
+            : null
         })
       )
       .catch(() => dispatchSession({ type: 'finish-loading', user: null }));
@@ -327,12 +371,7 @@ export default function Home() {
     }
   }
 
-  if (loading)
-    return (
-      <main className="auth-shell">
-        <p>불러오는 중…</p>
-      </main>
-    );
+  if (loading) return <AppShellSkeleton />;
   if (!user) return <AuthCard />;
   return (
     <main className="app-shell">
@@ -461,7 +500,7 @@ function AuthCard() {
             </p>
           </div>
         </div>
-        <div className="auth-card">
+        <UiCard className="auth-card">
           <p className="eyebrow">계정 로그인</p>
           <h1>작업공간에 로그인</h1>
           <p className="muted">관리자는 Google 계정, 멤버는 아이디 또는 패스키를 사용합니다.</p>
@@ -470,50 +509,53 @@ function AuthCard() {
           </a>
           <div className="auth-divider">또는 아이디로 로그인</div>
           <form onSubmit={login}>
-            <label className="form-field">
+            <UiLabel className="form-field">
               <span>아이디</span>
-              <input
+              <UiInput
                 autoComplete="username"
                 placeholder="아이디를 입력하세요"
                 value={loginId}
                 onChange={(event) => dispatch({ type: 'set-login-id', value: event.target.value })}
               />
-            </label>
-            <label className="form-field">
+            </UiLabel>
+            <UiLabel className="form-field">
               <span>비밀번호</span>
-              <input
+              <UiInput
                 autoComplete="current-password"
                 placeholder="비밀번호를 입력하세요"
                 type="password"
                 value={password}
                 onChange={(event) => dispatch({ type: 'set-password', value: event.target.value })}
               />
-            </label>
+            </UiLabel>
             {error && <p className="modal-error">{error}</p>}
-            <button
+            <UiButton
+              variant="outline"
               className="secondary-button"
               disabled={busy || !loginId.trim() || !password}
               type="submit"
             >
               로그인 <span aria-hidden="true">→</span>
-            </button>
+            </UiButton>
           </form>
           <div className="auth-actions">
-            <button
+            <UiButton
+              variant="outline"
               className="secondary-button"
               disabled={busy || !supportsPasskeys}
               onClick={() => void loginWithPasskey()}
               type="button"
             >
               {supportsPasskeys ? '패스키로 로그인' : '이 브라우저는 패스키 미지원'}
-            </button>
-            <button
+            </UiButton>
+            <UiButton
+              variant="ghost"
               className="text-button"
               onClick={() => dispatch({ type: 'toggle-forgot' })}
               type="button"
             >
               비밀번호를 잊으셨나요?
-            </button>
+            </UiButton>
           </div>
           {!supportsPasskeys && (
             <p className="form-hint">
@@ -523,18 +565,19 @@ function AuthCard() {
           {forgotOpen && (
             <div className="reset-request">
               <p className="muted">아이디를 입력하면 관리자에게 비밀번호 변경 요청을 보냅니다.</p>
-              <button
+              <UiButton
+                variant="outline"
                 className="secondary-button"
                 disabled={busy || !loginId.trim()}
                 onClick={() => void requestReset()}
                 type="button"
               >
                 관리자에게 변경 요청
-              </button>
+              </UiButton>
               {forgotMessage && <p className="form-hint">{forgotMessage}</p>}
             </div>
           )}
-        </div>
+        </UiCard>
       </section>
     </main>
   );
@@ -555,7 +598,28 @@ function Workspace({
     initialWorkspaceLoadState<FileItem>
   );
   const { files, loading, refreshing, message } = loadState;
-  const setMessage = (value: string) => dispatchLoad({ type: 'set-message', message: value });
+  const [toastState, dispatchToast] = useReducer(toastReducer, initialToastState);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const showToast = (toastMessage: string, type: ToastType = 'info') => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    dispatchToast({
+      type: 'add',
+      toast: { id, message: toastMessage, type, timestamp: Date.now() }
+    });
+    window.setTimeout(() => {
+      dispatchToast({ type: 'remove', id });
+    }, 4000);
+  };
+
+  const setMessage = (value: string, type: ToastType = 'info') => {
+    dispatchLoad({ type: 'set-message', message: value });
+    if (value) {
+      showToast(value, type);
+    }
+  };
+
+  const [shareLinkBusyId, setShareLinkBusyId] = useState<string | null>(null);
   const [navigation, dispatchNavigation] = useReducer(
     workspaceNavigationReducer<FileItem>,
     undefined,
@@ -571,6 +635,14 @@ function Workspace({
     selectedIds,
     lastSelectedId
   } = navigation;
+
+  const handleSortClick = (key: WorkspaceSortKey) => {
+    if (sortBy === key) {
+      dispatchInteraction({ type: 'toggle-sort-direction' });
+    } else {
+      dispatchInteraction({ type: 'set-sort', sortBy: key });
+    }
+  };
   const [invitationPanel, dispatchInvitation] = useReducer(
     invitationPanelReducer<ShareInvitation>,
     undefined,
@@ -675,6 +747,12 @@ function Workspace({
   const mockPermission: MockPermission = mockMode
     ? mockPermissionFromQuery(new URLSearchParams(window.location.search).get('mockAccess'))
     : 'owner';
+  const googleConnectionStatus = user.googleConnectionStatus ?? 'missing';
+  const googleConnectionNeedsSetup =
+    !mockMode &&
+    (googleConnectionStatus === 'missing' || googleConnectionStatus === 'reauthorization-required');
+  const googleReauthorizationRequired = googleConnectionStatus === 'reauthorization-required';
+  const googleConnectionUnavailable = googleConnectionStatus === 'unavailable';
 
   async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit) {
     const response = await fetch(input, init);
@@ -815,10 +893,14 @@ function Workspace({
 
   useEffect(() => {
     if (!search) {
+      setIsSearching(false);
       void loadFiles();
       return;
     }
-    const timer = window.setTimeout(() => void loadFiles(), 350);
+    setIsSearching(true);
+    const timer = window.setTimeout(() => {
+      void loadFiles().finally(() => setIsSearching(false));
+    }, 350);
     return () => window.clearTimeout(timer);
   }, [folderId, trash, search, showShared, showRequests]);
 
@@ -1074,10 +1156,6 @@ function Workspace({
 
   function isVideo(file: FileItem) {
     return getFileKind(file.mimeType) === 'video';
-  }
-
-  function isAudio(file: FileItem) {
-    return getFileKind(file.mimeType) === 'audio';
   }
 
   function openPreview(file: FileItem) {
@@ -1514,6 +1592,33 @@ function Workspace({
       setMessage('공유 설정을 저장하지 못했습니다. 연결을 확인해주세요.');
     } finally {
       dispatchShare({ type: 'save-finish' });
+    }
+  }
+
+  async function createFileShareLink(file: FileItem) {
+    if (mockMode || shareLinkBusyId) return;
+    setShareLinkBusyId(file.id);
+    try {
+      const response = await createShareLink(authenticatedFetch, file.id);
+      if (!response.ok) {
+        setMessage(await readResponseMessage(response, '공유 링크를 만들지 못했습니다.'));
+        return;
+      }
+      const result = (await response.json()) as { link?: string };
+      if (!result.link) {
+        setMessage('공유 링크를 만들지 못했습니다.');
+        return;
+      }
+      const copied = await copyTextToClipboard(result.link);
+      setMessage(
+        copied
+          ? '공유 링크를 만들고 클립보드에 복사했습니다.'
+          : '공유 링크는 만들었지만 클립보드에 복사하지 못했습니다.'
+      );
+    } catch {
+      setMessage('공유 링크를 만들지 못했습니다. 연결을 확인해주세요.');
+    } finally {
+      setShareLinkBusyId(null);
     }
   }
 
@@ -2015,15 +2120,19 @@ function Workspace({
     uploadProgress,
     currentShareMembers,
     availableShareMembers
-  } = deriveWorkspaceCollections({
-    files,
-    selectedIds,
-    sortBy,
-    descending: sortDescending,
-    uploads,
-    shareMembers: shareUsers,
-    sharedMemberIds: sharedUserIds
-  });
+  } = useMemo(
+    () =>
+      deriveWorkspaceCollections({
+        files,
+        selectedIds,
+        sortBy,
+        descending: sortDescending,
+        uploads,
+        shareMembers: shareUsers,
+        sharedMemberIds: sharedUserIds
+      }),
+    [files, selectedIds, sortBy, sortDescending, uploads, shareUsers, sharedUserIds]
+  );
   const workspacePresentation = getWorkspacePresentation({
     showShared,
     showRequests,
@@ -2075,13 +2184,7 @@ function Workspace({
           </span>
         </div>
       )}
-      <motion.nav
-        className="workspace-nav"
-        aria-label="작업공간 메뉴"
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: 'easeOut' }}
-      >
+      <nav className="workspace-nav" aria-label="작업공간 메뉴">
         <div className="nav-primary">
           <button
             className={!showShared && !showRequests && !trash ? 'current' : ''}
@@ -2134,10 +2237,10 @@ function Workspace({
           <button onClick={() => void openProfile()}>
             <Icon name="profile" />내 정보
           </button>
-          {user.role === 'admin' && user.googleConnected === false && !mockMode && (
+          {user.role === 'admin' && googleConnectionNeedsSetup && (
             <button onClick={connectGoogle}>
               <Icon name="drive" />
-              Drive 연결
+              {googleReauthorizationRequired ? '다시 연결' : 'Drive 연결'}
             </button>
           )}
           <button onClick={() => void loadFiles()} aria-label="파일 목록 새로고침">
@@ -2145,332 +2248,375 @@ function Workspace({
             새로고침
           </button>
         </div>
-      </motion.nav>
-      <section className="workspace-heading" aria-labelledby="workspace-title">
-        <div>
-          <p className="workspace-eyebrow">{workspacePresentation.eyebrow}</p>
-          <h1 id="workspace-title">{workspacePresentation.title}</h1>
-          <p>{workspacePresentation.description}</p>
-        </div>
-        <div className="workspace-stats" aria-label="현재 목록 요약">
-          <div className="workspace-item-count">
-            <strong>{visibleFiles.length}</strong>
-            <span>{search ? '검색 결과' : '항목'}</span>
-          </div>
-          {storageQuota?.available && storageQuota.limit ? (
-            <div className="workspace-storage">
-              <span>
-                저장 공간 {formatBytes(String(storageQuota.usage))} /{' '}
-                {formatBytes(String(storageQuota.limit))}
-              </span>
-              <div
-                className="storage-meter"
-                role="progressbar"
-                aria-label="저장 공간 사용량"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={storagePercent(storageQuota)}
-              >
-                <span style={{ width: `${storagePercent(storageQuota)}%` }} />
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </section>
-      {!mockMode && user.googleConnected === false && (
-        <section className="setup-banner" role="status">
+      </nav>
+      <div className="workspace-main">
+        <section className="workspace-heading" aria-labelledby="workspace-title">
           <div>
-            <strong>Google Drive를 연결하면 파일 공간을 사용할 수 있습니다.</strong>
-            <p>관리자 계정에서 OAuth 연결을 한 번만 완료해주세요.</p>
+            <p className="workspace-eyebrow">{workspacePresentation.eyebrow}</p>
+            <h1 id="workspace-title">{workspacePresentation.title}</h1>
+            <p>{workspacePresentation.description}</p>
           </div>
-          {user.role === 'admin' && (
-            <button className="secondary-button" onClick={connectGoogle}>
-              연결하기
-            </button>
-          )}
-        </section>
-      )}
-      <section
-        className={`workspace-file-area ${sharedFolderIndex ? 'shared-folder-index' : ''}`}
-        aria-label="파일 작업 및 목록"
-      >
-        <motion.div
-          className="toolbar"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.08, ease: 'easeOut' }}
-        >
-          <div
-            className="toolbar-actions toolbar-action-group"
-            role="group"
-            aria-label="파일 작업 메뉴"
-          >
-            {canEditCurrentFolder && (
-              <label className="primary-button upload-button">
-                <Icon name="upload" />
-                파일 업로드
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  hidden
-                  onChange={(event) => {
-                    if (event.currentTarget.files) void uploadFiles(event.currentTarget.files);
-                    event.currentTarget.value = '';
-                  }}
-                />
-              </label>
-            )}
-            {canEditCurrentFolder && (
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  dispatchWorkspaceModal({ type: 'open-new-folder' });
-                }}
-              >
-                <Icon name="folder" />새 폴더
-              </button>
-            )}
-            {selectedFiles.length > 0 && !trash && (
-              <>
-                {selectedFiles.some((file) => !isFolder(file)) && (
-                  <button
-                    className="secondary-button"
-                    disabled={selectionBusy}
-                    onClick={() => void downloadSelected()}
-                  >
-                    {selectionBusy ? '다운로드 중…' : '선택 다운로드'}
-                  </button>
-                )}
-                {selectedFiles.some(canTrashFile) && (
-                  <button
-                    className="danger-button"
-                    disabled={selectionBusy}
-                    onClick={() => void trashSelected()}
-                  >
-                    선택 삭제 ({selectedFiles.filter(canTrashFile).length})
-                  </button>
-                )}
-              </>
-            )}
-            {selectedFiles.length > 0 && trash && (
-              <button
-                className="danger-button"
-                disabled={selectionBusy}
-                onClick={() => void permanentlyDeleteSelected()}
-              >
-                영구 삭제 ({selectedFiles.length})
-              </button>
-            )}
-          </div>
-          <div className="toolbar-controls">
-            <label className="search-field">
-              <Icon name="search" />
-              <span className="sr-only">파일 검색</span>
-              <input
-                className="search"
-                placeholder="이 폴더에서 검색"
-                value={search}
-                onChange={(event) =>
-                  dispatchNavigation({ type: 'set-search', value: event.target.value })
-                }
-              />
-            </label>
-            <select
-              aria-label="정렬 기준"
-              value={sortBy}
-              onChange={(event) =>
-                dispatchInteraction({
-                  type: 'set-sort',
-                  sortBy: event.target.value as WorkspaceSortKey
-                })
-              }
-            >
-              <option value="name">이름순</option>
-              <option value="modifiedTime">최근 수정순</option>
-              <option value="size">크기순</option>
-            </select>
-            <button
-              className="secondary-button sort-direction"
-              aria-label="정렬 방향"
-              onClick={() => dispatchInteraction({ type: 'toggle-sort-direction' })}
-            >
-              {sortDescending ? '↓' : '↑'}
-            </button>
-          </div>
-        </motion.div>
-        {!sharedFolderIndex && (
-          <div className={`selection-bar ${selectedFiles.length > 0 ? 'is-active' : ''}`}>
-            <label className="select-all-control">
-              <input
-                ref={selectAllRef}
-                type="checkbox"
-                aria-label="현재 목록 전체 선택"
-                checked={
-                  visibleFiles.length > 0 &&
-                  visibleFiles.every((file) => file.isAdminSpace || selectedIds.has(file.id))
-                }
-                onChange={(event) => toggleSelectAll(event.currentTarget.checked)}
-              />
-              {selectedFiles.length > 0 ? `${selectedFiles.length}개 선택됨` : '전체 선택'}
-            </label>
-            {selectedFiles.length === 0 && (
-              <span className="selection-help">
-                Shift 키로 여러 항목을 연속 선택할 수 있습니다.
-              </span>
-            )}
-          </div>
-        )}
-        {canEditCurrentFolder && (
-          <p className="privacy-banner" role="note">
-            <span aria-hidden="true">!</span> 업로드한 파일은 관리자가 확인할 수 있습니다.
-          </p>
-        )}
-        {!trash && canEditCurrentFolder && (
-          <p className="drop-hint" aria-live="polite">
-            파일이나 폴더를 폴더 위로 끌어다 놓으면 이동합니다.
-          </p>
-        )}
-        {trash && <p className="drop-hint">휴지통의 파일은 7일 후 자동으로 영구 삭제됩니다.</p>}
-        {showRequests && invitations.length > 0 && (
-          <section className="share-invitation-banner" aria-label="공유 폴더 요청">
-            <strong>공유 폴더 요청</strong>
-            {invitations.map((invitation) => (
-              <div className="invitation-row" key={invitation.id}>
+          <div className="workspace-stats" aria-label="현재 목록 요약">
+            <div className="workspace-item-count">
+              <strong>{visibleFiles.length}</strong>
+              <span>{search ? '검색 결과' : '항목'}</span>
+            </div>
+            {storageQuota?.available && storageQuota.limit ? (
+              <div className="workspace-storage">
                 <span>
-                  {invitation.folderName ?? '공유 폴더'}
-                  {invitation.inviterName ? ` · ${invitation.inviterName}` : ''}
+                  저장 공간 {formatBytes(String(storageQuota.usage))} /{' '}
+                  {formatBytes(String(storageQuota.limit))}
                 </span>
-                <button
-                  className="primary-button"
-                  disabled={respondingInvitationId === invitation.id}
-                  onClick={() => void respondToInvitation(invitation, true)}
+                <div
+                  className="storage-meter"
+                  role="progressbar"
+                  aria-label="저장 공간 사용량"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={storagePercent(storageQuota)}
                 >
-                  수락
-                </button>
-                <button
-                  className="secondary-button"
-                  disabled={respondingInvitationId === invitation.id}
-                  onClick={() => void respondToInvitation(invitation, false)}
-                >
-                  거절
-                </button>
+                  <span style={{ width: `${storagePercent(storageQuota)}%` }} />
+                </div>
               </div>
-            ))}
+            ) : null}
+          </div>
+        </section>
+        {googleConnectionNeedsSetup && (
+          <section className="setup-banner" role="status">
+            <div>
+              <strong>
+                {googleReauthorizationRequired
+                  ? 'Google Drive 연결 권한이 만료되었습니다.'
+                  : 'Google Drive를 연결하면 파일 공간을 사용할 수 있습니다.'}
+              </strong>
+              <p>
+                {googleReauthorizationRequired
+                  ? '관리자 계정으로 Drive 연결을 다시 완료해주세요.'
+                  : '관리자 계정에서 OAuth 연결을 한 번만 완료해주세요.'}
+              </p>
+            </div>
+            {user.role === 'admin' && (
+              <button className="secondary-button" onClick={connectGoogle}>
+                {googleReauthorizationRequired ? '다시 연결' : '연결하기'}
+              </button>
+            )}
           </section>
         )}
-        <nav className="breadcrumbs" aria-label="폴더 경로">
-          <button
-            className="parent-folder-button"
-            aria-label={folderId ? '상위 폴더로 이동' : '상위 폴더 없음'}
-            disabled={!folderId}
-            onClick={goToParentFolder}
-          >
-            <span aria-hidden="true">←</span>
-            상위 폴더
-          </button>
-          <span className="breadcrumb-divider" aria-hidden="true">
-            ·
-          </span>
-          <button
-            className={!folderId ? 'current' : ''}
-            data-parent-drop-id={rootParentId ?? undefined}
-            onDragOver={(event) => rootParentId && handleNativeDragOver(event, rootParentId)}
-            onDragLeave={(event) => rootParentId && handleNativeDragLeave(event, rootParentId)}
-            onDrop={(event) => rootParentId && handleNativeDrop(event, rootParentId)}
-            onClick={() => {
-              if (consumeSuppressedFileClick()) return;
-              dispatchNavigation({ type: 'open-root' });
-            }}
-          >
-            {showRequests ? '공유 요청' : showShared ? '공유 폴더' : '저장 공간'}
-          </button>
-          {folderPath.map((folder, index) => (
-            <span key={folder.id} className="breadcrumb-segment">
-              <span aria-hidden="true">/</span>
-              <button
-                className={index === folderPath.length - 1 ? 'current' : ''}
-                data-folder-drop-id={folder.id}
-                data-parent-drop-id={folder.id}
-                onDragOver={(event) => handleNativeDragOver(event, folder.id)}
-                onDragLeave={(event) => handleNativeDragLeave(event, folder.id)}
-                onDrop={(event) => handleNativeDrop(event, folder.id)}
-                onClick={() => {
-                  if (consumeSuppressedFileClick()) return;
-                  dispatchNavigation({ type: 'open-breadcrumb', index });
-                }}
-              >
-                {folder.name}
-              </button>
-            </span>
-          ))}
-        </nav>
-        <div
-          className="file-table"
-          aria-busy={loading || refreshing}
-          onDragOver={(event) => {
-            if ((event.target as HTMLElement).closest('[data-folder-drop-id]')) return;
-            handleExternalDragOver(event, folderId);
-          }}
-          onDragLeave={(event) => {
-            if ((event.target as HTMLElement).closest('[data-folder-drop-id]')) return;
-            handleExternalDragLeave(event, folderId);
-          }}
-          onDrop={(event) => {
-            if ((event.target as HTMLElement).closest('[data-folder-drop-id]')) return;
-            handleExternalDrop(event, folderId);
-          }}
+        {googleConnectionUnavailable && (
+          <section className="setup-banner" role="status">
+            <div>
+              <strong>Google Drive 연결 상태를 확인할 수 없습니다.</strong>
+              <p>잠시 후 파일 목록을 새로고침해주세요.</p>
+            </div>
+          </section>
+        )}
+        <section
+          className={`workspace-file-area ${sharedFolderIndex ? 'shared-folder-index' : ''}`}
+          aria-label="파일 작업 및 목록"
         >
-          {refreshing && !loading && (
-            <div className="refresh-status" role="status" aria-live="polite">
-              <span className="refresh-dot" aria-hidden="true" />
-              목록을 업데이트하고 있습니다.
+          <div className="toolbar">
+            <div
+              className="toolbar-actions toolbar-action-group"
+              role="group"
+              aria-label="파일 작업 메뉴"
+            >
+              {canEditCurrentFolder && (
+                <label className="primary-button upload-button">
+                  <Icon name="upload" />
+                  파일 업로드
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      if (event.currentTarget.files) void uploadFiles(event.currentTarget.files);
+                      event.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              )}
+              {canEditCurrentFolder && (
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    dispatchWorkspaceModal({ type: 'open-new-folder' });
+                  }}
+                >
+                  <Icon name="folder" />새 폴더
+                </button>
+              )}
+              {selectedFiles.length > 0 && !trash && (
+                <>
+                  {selectedFiles.some((file) => !isFolder(file)) && (
+                    <button
+                      className="secondary-button"
+                      disabled={selectionBusy}
+                      onClick={() => void downloadSelected()}
+                    >
+                      {selectionBusy ? '다운로드 중…' : '선택 다운로드'}
+                    </button>
+                  )}
+                  {selectedFiles.some(canTrashFile) && (
+                    <button
+                      className="danger-button"
+                      disabled={selectionBusy}
+                      onClick={() => void trashSelected()}
+                    >
+                      선택 삭제 ({selectedFiles.filter(canTrashFile).length})
+                    </button>
+                  )}
+                </>
+              )}
+              {selectedFiles.length > 0 && trash && (
+                <button
+                  className="danger-button"
+                  disabled={selectionBusy}
+                  onClick={() => void permanentlyDeleteSelected()}
+                >
+                  영구 삭제 ({selectedFiles.length})
+                </button>
+              )}
+            </div>
+            <div className="toolbar-controls">
+              <label className="search-field">
+                {isSearching ? (
+                  <span className="search-spinner" aria-hidden="true" />
+                ) : (
+                  <Icon name="search" />
+                )}
+                <span className="sr-only">파일 검색</span>
+                <input
+                  className="search"
+                  placeholder="이 폴더에서 검색"
+                  value={search}
+                  onChange={(event) =>
+                    dispatchNavigation({ type: 'set-search', value: event.target.value })
+                  }
+                />
+                {search && (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    aria-label="검색어 지우기"
+                    onClick={() => dispatchNavigation({ type: 'set-search', value: '' })}
+                  >
+                    ×
+                  </button>
+                )}
+              </label>
+              <div className="toolbar-sort-group">
+                <select
+                  aria-label="정렬 기준"
+                  value={sortBy}
+                  onChange={(event) =>
+                    dispatchInteraction({
+                      type: 'set-sort',
+                      sortBy: event.target.value as WorkspaceSortKey
+                    })
+                  }
+                >
+                  <option value="name">이름순</option>
+                  <option value="modifiedTime">최근 수정순</option>
+                  <option value="size">크기순</option>
+                </select>
+                <button
+                  className="secondary-button sort-direction"
+                  aria-label="정렬 방향"
+                  onClick={() => dispatchInteraction({ type: 'toggle-sort-direction' })}
+                >
+                  {sortDescending ? '↓' : '↑'}
+                </button>
+              </div>
+            </div>
+          </div>
+          {!sharedFolderIndex && (
+            <div className={`selection-bar ${selectedFiles.length > 0 ? 'is-active' : ''}`}>
+              <label className="select-all-control">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  aria-label="현재 목록 전체 선택"
+                  checked={
+                    visibleFiles.length > 0 &&
+                    visibleFiles.every((file) => file.isAdminSpace || selectedIds.has(file.id))
+                  }
+                  onChange={(event) => toggleSelectAll(event.currentTarget.checked)}
+                />
+                <span>
+                  {selectedFiles.length > 0 ? `${selectedFiles.length}개 선택됨` : '전체 선택'}
+                </span>
+              </label>
+              {selectedFiles.length === 0 && (
+                <span className="selection-help">
+                  Shift 키로 여러 항목을 연속 선택할 수 있습니다.
+                </span>
+              )}
             </div>
           )}
-          <div className="table-head" role="row">
-            {!sharedFolderIndex && <span aria-hidden="true" />}
-            {!sharedFolderIndex && <span aria-hidden="true" />}
-            <span role="columnheader">이름</span>
-            <span role="columnheader">크기</span>
-            <span role="columnheader">수정</span>
-            <span role="columnheader">작업</span>
-          </div>
-          {loading ? (
-            <motion.div className="empty-row" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <span className="empty-orbit" aria-hidden="true" />
-              목록을 준비하고 있습니다.
-            </motion.div>
-          ) : files.length === 0 ? (
-            <motion.div
-              className="empty-row"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
+          {canEditCurrentFolder && (
+            <p className="privacy-banner" role="note">
+              <span aria-hidden="true">!</span> 업로드한 파일은 관리자가 확인할 수 있습니다.
+            </p>
+          )}
+          {!trash && canEditCurrentFolder && (
+            <p className="drop-hint" aria-live="polite">
+              파일이나 폴더를 폴더 위로 끌어다 놓으면 이동합니다.
+            </p>
+          )}
+          {trash && <p className="drop-hint">휴지통의 파일은 7일 후 자동으로 영구 삭제됩니다.</p>}
+          {showRequests && invitations.length > 0 && (
+            <section className="share-invitation-banner" aria-label="공유 폴더 요청">
+              <strong>공유 폴더 요청</strong>
+              {invitations.map((invitation) => (
+                <div className="invitation-row" key={invitation.id}>
+                  <span>
+                    {invitation.folderName ?? '공유 폴더'}
+                    {invitation.inviterName ? ` · ${invitation.inviterName}` : ''}
+                  </span>
+                  <button
+                    className="primary-button"
+                    disabled={respondingInvitationId === invitation.id}
+                    onClick={() => void respondToInvitation(invitation, true)}
+                  >
+                    수락
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={respondingInvitationId === invitation.id}
+                    onClick={() => void respondToInvitation(invitation, false)}
+                  >
+                    거절
+                  </button>
+                </div>
+              ))}
+            </section>
+          )}
+          <nav className="breadcrumbs" aria-label="폴더 경로">
+            <button
+              className="parent-folder-button"
+              aria-label={folderId ? '상위 폴더로 이동' : '상위 폴더 없음'}
+              disabled={!folderId}
+              onClick={goToParentFolder}
             >
-              <span className="empty-symbol" aria-hidden="true">
-                {showRequests ? '↗' : trash ? '♧' : '＋'}
+              <span aria-hidden="true">←</span>
+              상위 폴더
+            </button>
+            <span className="breadcrumb-divider" aria-hidden="true">
+              ·
+            </span>
+            <button
+              className={!folderId ? 'current' : ''}
+              data-parent-drop-id={rootParentId ?? undefined}
+              onDragOver={(event) => rootParentId && handleNativeDragOver(event, rootParentId)}
+              onDragLeave={(event) => rootParentId && handleNativeDragLeave(event, rootParentId)}
+              onDrop={(event) => rootParentId && handleNativeDrop(event, rootParentId)}
+              onClick={() => {
+                if (consumeSuppressedFileClick()) return;
+                dispatchNavigation({ type: 'open-root' });
+              }}
+            >
+              {showRequests ? '공유 요청' : showShared ? '공유 폴더' : '저장 공간'}
+            </button>
+            {folderPath.map((folder, index) => (
+              <span key={folder.id} className="breadcrumb-segment">
+                <span aria-hidden="true">/</span>
+                <button
+                  className={index === folderPath.length - 1 ? 'current' : ''}
+                  data-folder-drop-id={folder.id}
+                  data-parent-drop-id={folder.id}
+                  onDragOver={(event) => handleNativeDragOver(event, folder.id)}
+                  onDragLeave={(event) => handleNativeDragLeave(event, folder.id)}
+                  onDrop={(event) => handleNativeDrop(event, folder.id)}
+                  onClick={() => {
+                    if (consumeSuppressedFileClick()) return;
+                    dispatchNavigation({ type: 'open-breadcrumb', index });
+                  }}
+                >
+                  {folder.name}
+                </button>
               </span>
-              <strong>
-                {showRequests
-                  ? '새 공유 요청이 없습니다.'
-                  : showShared
-                    ? '공유받은 폴더가 없습니다.'
-                    : trash
-                      ? '휴지통이 비어 있습니다.'
-                      : '파일이 없습니다.'}
-              </strong>
-              <small>
-                {showRequests
-                  ? '새 요청이 도착하면 이곳에서 수락하거나 거절할 수 있습니다.'
-                  : showShared
-                    ? '다른 사용자가 폴더를 공유하면 여기에 표시됩니다.'
-                    : trash
-                      ? '삭제한 항목은 여기에서 복구할 수 있어요.'
-                      : '새 폴더를 만들거나 파일을 업로드하세요.'}
-              </small>
-            </motion.div>
-          ) : (
-            <AnimatePresence initial={false}>
-              {visibleFiles.map((file) => (
+            ))}
+          </nav>
+          <div
+            className="file-table"
+            aria-busy={loading || refreshing}
+            onDragOver={(event) => {
+              if ((event.target as HTMLElement).closest('[data-folder-drop-id]')) return;
+              handleExternalDragOver(event, folderId);
+            }}
+            onDragLeave={(event) => {
+              if ((event.target as HTMLElement).closest('[data-folder-drop-id]')) return;
+              handleExternalDragLeave(event, folderId);
+            }}
+            onDrop={(event) => {
+              if ((event.target as HTMLElement).closest('[data-folder-drop-id]')) return;
+              handleExternalDrop(event, folderId);
+            }}
+          >
+            {refreshing && !loading && (
+              <div className="table-refresh-bar" role="progressbar" aria-label="목록 새로고침 중" />
+            )}
+            <div className="table-head" role="row">
+              {!sharedFolderIndex && <span aria-hidden="true" />}
+              {!sharedFolderIndex && <span aria-hidden="true" />}
+              <span role="columnheader">
+                <button
+                  type="button"
+                  className={`table-head-btn ${sortBy === 'name' ? 'active' : ''}`}
+                  onClick={() => handleSortClick('name')}
+                >
+                  이름 {sortBy === 'name' ? (sortDescending ? '↓' : '↑') : ''}
+                </button>
+              </span>
+              <span role="columnheader">
+                <button
+                  type="button"
+                  className={`table-head-btn ${sortBy === 'size' ? 'active' : ''}`}
+                  onClick={() => handleSortClick('size')}
+                >
+                  크기 {sortBy === 'size' ? (sortDescending ? '↓' : '↑') : ''}
+                </button>
+              </span>
+              <span role="columnheader">
+                <button
+                  type="button"
+                  className={`table-head-btn ${sortBy === 'modifiedTime' ? 'active' : ''}`}
+                  onClick={() => handleSortClick('modifiedTime')}
+                >
+                  수정 {sortBy === 'modifiedTime' ? (sortDescending ? '↓' : '↑') : ''}
+                </button>
+              </span>
+              <span role="columnheader">작업</span>
+            </div>
+            {loading ? (
+              <TableSkeleton rows={6} />
+            ) : files.length === 0 ? (
+              <div className="empty-row">
+                <span className="empty-symbol" aria-hidden="true">
+                  {showRequests ? '↗' : trash ? '♧' : '＋'}
+                </span>
+                <strong>
+                  {showRequests
+                    ? '새 공유 요청이 없습니다.'
+                    : showShared
+                      ? '공유받은 폴더가 없습니다.'
+                      : trash
+                        ? '휴지통이 비어 있습니다.'
+                        : '파일이 없습니다.'}
+                </strong>
+                <small>
+                  {showRequests
+                    ? '새 요청이 도착하면 이곳에서 수락하거나 거절할 수 있습니다.'
+                    : showShared
+                      ? '다른 사용자가 폴더를 공유하면 여기에 표시됩니다.'
+                      : trash
+                        ? '삭제한 항목은 여기에서 복구할 수 있어요.'
+                        : '새 폴더를 만들거나 파일을 업로드하세요.'}
+                </small>
+              </div>
+            ) : (
+              visibleFiles.map((file) => (
                 <div
                   className={`file-row ${
                     moveDropTarget === file.id ? 'file-row-drop-target' : ''
@@ -2538,30 +2684,15 @@ function Workspace({
                           : openPreview(file)
                     }
                   >
-                    <span
-                      className={`file-icon ${isFolder(file) ? 'folder' : ''} ${isImage(file) ? 'image' : ''} ${isVideo(file) ? 'video' : ''}`}
-                      aria-hidden="true"
-                    >
-                      {isFolder(file) ? (
-                        '▰'
-                      ) : isImage(file) || isVideo(file) ? (
-                        <>
-                          {!mockMode && (
-                            <img
-                              src={`/api/files/${file.id}/thumbnail`}
-                              alt=""
-                              loading="lazy"
-                              decoding="async"
-                            />
-                          )}
-                          {isVideo(file) && <i>▶</i>}
-                        </>
-                      ) : isAudio(file) ? (
-                        '♪'
-                      ) : (
-                        '□'
-                      )}
-                    </span>
+                    <FileIcon
+                      name={file.name}
+                      mimeType={file.mimeType}
+                      thumbnailUrl={
+                        !mockMode && (isImage(file) || isVideo(file))
+                          ? `/api/files/${file.id}/thumbnail`
+                          : null
+                      }
+                    />
                     <span className="file-copy">
                       <strong>{file.name}</strong>
                       <small>
@@ -2601,17 +2732,35 @@ function Workspace({
                   </span>
                   <div className="row-actions">
                     {canEditFile(file) && (
-                      <button onClick={() => beginRename(file)}>이름 변경</button>
+                      <button className="row-action-btn" onClick={() => beginRename(file)}>
+                        이름 변경
+                      </button>
                     )}
                     {!trash && !isFolder(file) && isPreviewable(file) && (
-                      <button onClick={() => openPreview(file)}>미리보기</button>
+                      <button className="row-action-btn" onClick={() => openPreview(file)}>
+                        미리보기
+                      </button>
                     )}
                     {!trash && file.canShare && (
-                      <button onClick={() => void openShareSettings(file)}>공유 관리</button>
+                      <button
+                        className="row-action-btn"
+                        onClick={() => void openShareSettings(file)}
+                      >
+                        공유
+                      </button>
+                    )}
+                    {!trash && !isFolder(file) && canEditFile(file) && (
+                      <button
+                        className="row-action-btn"
+                        disabled={mockMode || shareLinkBusyId === file.id}
+                        onClick={() => void createFileShareLink(file)}
+                      >
+                        {shareLinkBusyId === file.id ? '생성 중…' : '링크'}
+                      </button>
                     )}
                     {!trash && canTrashFile(file) ? (
                       <button
-                        className="danger-button"
+                        className="row-action-btn danger"
                         disabled={isOperationPending(file.id)}
                         onClick={() => void remove(file)}
                       >
@@ -2621,13 +2770,14 @@ function Workspace({
                     {trash && (
                       <>
                         <button
+                          className="row-action-btn"
                           disabled={isOperationPending(file.id)}
                           onClick={() => void restoreFile(file)}
                         >
                           복구
                         </button>
                         <button
-                          className="danger-button"
+                          className="row-action-btn danger"
                           disabled={isOperationPending(file.id)}
                           onClick={() => void permanentlyDeleteFile(file)}
                         >
@@ -2637,27 +2787,52 @@ function Workspace({
                     )}
                     {file.mimeType !== 'application/vnd.google-apps.folder' &&
                       (mockMode ? (
-                        <button onClick={() => download(file)}>다운로드</button>
+                        <button className="row-action-btn" onClick={() => download(file)}>
+                          다운로드
+                        </button>
                       ) : (
-                        <a href={`/api/files/${file.id}/download`} download>
+                        <a
+                          className="row-action-btn"
+                          href={`/api/files/${file.id}/download`}
+                          download
+                        >
                           다운로드
                         </a>
                       ))}
                   </div>
                 </div>
-              ))}
-            </AnimatePresence>
-          )}
-        </div>
-      </section>
-      {message && (
-        <p className="workspace-message" role="status" aria-live="polite">
-          {message}
-        </p>
-      )}
-      {user.role === 'admin' && (
-        <p className="muted">관리자 공간과 사용자 관리는 기존 API를 통해 계속 제공됩니다.</p>
-      )}
+              ))
+            )}
+          </div>
+        </section>
+        <FloatingActionBar
+          selectedCount={selectedFiles.length}
+          totalCount={visibleFiles.length}
+          onClearSelection={() =>
+            dispatchNavigation({ type: 'replace-selection', ids: new Set(), anchorId: null })
+          }
+          onSelectAll={(checked) => toggleSelectAll(checked)}
+          onDownload={() => void downloadSelected()}
+          onTrash={() => void trashSelected()}
+          onPermanentDelete={() => void permanentlyDeleteSelected()}
+          trash={trash}
+          busy={selectionBusy}
+          hasDownloadable={selectedFiles.some((f) => !isFolder(f))}
+          hasTrashable={selectedFiles.some(canTrashFile)}
+        />
+        <ToastView
+          toasts={toastState.toasts}
+          onDismiss={(id) => dispatchToast({ type: 'remove', id })}
+        />
+        {message && (
+          <p className="workspace-message" role="status" aria-live="polite">
+            {message}
+          </p>
+        )}
+        {user.role === 'admin' && (
+          <p className="muted">관리자 공간과 사용자 관리는 기존 API를 통해 계속 제공됩니다.</p>
+        )}
+      </div>
       {contextMenu && (
         <div
           className="context-menu"
@@ -2774,33 +2949,26 @@ function Workspace({
         </div>
       )}
       {newFolder.open && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onClick={(event) =>
-            event.currentTarget === event.target &&
-            dispatchWorkspaceModal({ type: 'close-new-folder' })
-          }
+        <Dialog
+          open={newFolder.open}
+          onOpenChange={(open) => {
+            if (!open) dispatchWorkspaceModal({ type: 'close-new-folder' });
+          }}
         >
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="folder-title">
-            <button
-              className="modal-close"
-              aria-label="닫기"
-              onClick={() => dispatchWorkspaceModal({ type: 'close-new-folder' })}
-            >
-              ×
-            </button>
-            <h2 id="folder-title">새 폴더</h2>
-            <p className="modal-description">이 공간 안에 새 폴더를 만들어요.</p>
+          <DialogContent className="modal">
+            <DialogHeader>
+              <DialogTitle>새 폴더</DialogTitle>
+              <DialogDescription>이 공간 안에 새 폴더를 만들어요.</DialogDescription>
+            </DialogHeader>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
                 void createFolder();
               }}
             >
-              <label className="form-field">
+              <UiLabel className="form-field">
                 <span>폴더 이름</span>
-                <input
+                <UiInput
                   autoFocus
                   placeholder="예: 프로젝트 자료"
                   value={newFolder.name}
@@ -2811,55 +2979,51 @@ function Workspace({
                     })
                   }
                 />
-              </label>
+              </UiLabel>
               {newFolder.error && <p className="modal-error">{newFolder.error}</p>}
-              <div className="modal-actions">
-                <button
+              <DialogFooter className="modal-actions">
+                <UiButton
+                  variant="outline"
                   className="secondary-button"
                   type="button"
                   onClick={() => dispatchWorkspaceModal({ type: 'close-new-folder' })}
                 >
                   취소
-                </button>
-                <button
+                </UiButton>
+                <UiButton
+                  variant="default"
                   className="primary-button"
                   disabled={newFolder.busy || !newFolder.name.trim()}
                   type="submit"
                 >
                   {newFolder.busy ? '만드는 중…' : '폴더 만들기'}
-                </button>
-              </div>
+                </UiButton>
+              </DialogFooter>
             </form>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
       {renameModal.file && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onClick={(event) =>
-            event.currentTarget === event.target && dispatchWorkspaceModal({ type: 'close-rename' })
-          }
+        <Dialog
+          open={Boolean(renameModal.file)}
+          onOpenChange={(open) => {
+            if (!open) dispatchWorkspaceModal({ type: 'close-rename' });
+          }}
         >
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="rename-title">
-            <button
-              className="modal-close"
-              aria-label="닫기"
-              onClick={() => dispatchWorkspaceModal({ type: 'close-rename' })}
-            >
-              ×
-            </button>
-            <h2 id="rename-title">이름 변경</h2>
-            <p className="modal-description">파일을 찾기 쉬운 이름으로 바꿔보세요.</p>
+          <DialogContent className="modal">
+            <DialogHeader>
+              <DialogTitle>이름 변경</DialogTitle>
+              <DialogDescription>파일을 찾기 쉬운 이름으로 바꿔보세요.</DialogDescription>
+            </DialogHeader>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
                 void rename();
               }}
             >
-              <label className="form-field">
+              <UiLabel className="form-field">
                 <span>새 이름</span>
-                <input
+                <UiInput
                   autoFocus
                   aria-label="새 이름"
                   value={renameModal.name}
@@ -2867,26 +3031,28 @@ function Workspace({
                     dispatchWorkspaceModal({ type: 'set-rename-name', name: event.target.value })
                   }
                 />
-              </label>
-              <div className="modal-actions">
-                <button
+              </UiLabel>
+              <DialogFooter className="modal-actions">
+                <UiButton
+                  variant="outline"
                   className="secondary-button"
                   type="button"
                   onClick={() => dispatchWorkspaceModal({ type: 'close-rename' })}
                 >
                   취소
-                </button>
-                <button
+                </UiButton>
+                <UiButton
+                  variant="default"
                   className="primary-button"
                   disabled={renameModal.busy || !renameModal.name.trim()}
                   type="submit"
                 >
                   {renameModal.busy ? '저장 중…' : '저장'}
-                </button>
-              </div>
+                </UiButton>
+              </DialogFooter>
             </form>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
       {uploads.length > 0 && showUploadTray && (
         <section className="upload-tray" aria-label="업로드 현황">
@@ -3101,13 +3267,18 @@ function Workspace({
               ×
             </button>
             <h2>같이 쓸 사람을 초대하세요.</h2>
-            <div className="invite-link mono">{inviteModal.link}</div>
-            <button
-              className="primary-button"
-              onClick={() => void copyTextToClipboard(inviteModal.link)}
-            >
-              링크 복사
-            </button>
+            <div className="invite-link-box">
+              <span className="invite-link mono">{inviteModal.link}</span>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  void copyTextToClipboard(inviteModal.link);
+                  showToast('초대 링크가 복사되었습니다.', 'success');
+                }}
+              >
+                링크 복사
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3241,69 +3412,80 @@ function Workspace({
                   계정 삭제
                 </button>
               ) : (
-                <div className="account-deletion-confirmation">
-                  <p className="modal-error">이 작업은 되돌릴 수 없습니다.</p>
-                  {accountDeletionScope.map((scope, index) => {
-                    const key = ['files', 'shares', 'passkeys'][
-                      index
-                    ] as keyof typeof deletionAcknowledged;
-                    return (
-                      <label className="deletion-check" key={key}>
-                        <input
-                          type="checkbox"
-                          checked={deletionAcknowledged[key]}
-                          onChange={(event) =>
-                            dispatchProfile({
-                              type: 'set-deletion-acknowledged',
-                              key,
-                              value: event.currentTarget.checked
-                            })
+                <AlertDialog
+                  open={showAccountDeletion}
+                  onOpenChange={(open) =>
+                    dispatchProfile({ type: 'set-account-deletion-open', value: open })
+                  }
+                >
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>계정 영구 삭제</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        삭제 요청 후에는 바로 로그아웃되며, 파일 정리는 백그라운드에서 이어집니다.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <p className="modal-error">이 작업은 되돌릴 수 없습니다.</p>
+                    {accountDeletionScope.map((scope, index) => {
+                      const key = ['files', 'shares', 'passkeys'][
+                        index
+                      ] as keyof typeof deletionAcknowledged;
+                      return (
+                        <label className="deletion-check" key={key}>
+                          <input
+                            type="checkbox"
+                            checked={deletionAcknowledged[key]}
+                            onChange={(event) =>
+                              dispatchProfile({
+                                type: 'set-deletion-acknowledged',
+                                key,
+                                value: event.currentTarget.checked
+                              })
+                            }
+                          />
+                          <span>{scope}</span>
+                        </label>
+                      );
+                    })}
+                    <UiLabel className="form-field">
+                      <span>
+                        계속하려면 <code>{ACCOUNT_DELETION_CONFIRMATION}</code>를 입력하세요
+                      </span>
+                      <UiInput
+                        value={deletionConfirmation}
+                        onChange={(event) =>
+                          dispatchProfile({
+                            type: 'set-deletion-confirmation',
+                            value: event.target.value
+                          })
+                        }
+                        autoComplete="off"
+                      />
+                    </UiLabel>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel asChild>
+                        <UiButton variant="outline" disabled={profileBusy}>
+                          취소
+                        </UiButton>
+                      </AlertDialogCancel>
+                      <AlertDialogAction asChild>
+                        <UiButton
+                          variant="destructive"
+                          disabled={
+                            profileBusy ||
+                            deletionConfirmation.trim() !== ACCOUNT_DELETION_CONFIRMATION ||
+                            !deletionAcknowledged.files ||
+                            !deletionAcknowledged.shares ||
+                            !deletionAcknowledged.passkeys
                           }
-                        />
-                        <span>{scope}</span>
-                      </label>
-                    );
-                  })}
-                  <label className="form-field">
-                    <span>
-                      계속하려면 <code>{ACCOUNT_DELETION_CONFIRMATION}</code>를 입력하세요
-                    </span>
-                    <input
-                      value={deletionConfirmation}
-                      onChange={(event) =>
-                        dispatchProfile({
-                          type: 'set-deletion-confirmation',
-                          value: event.target.value
-                        })
-                      }
-                      autoComplete="off"
-                    />
-                  </label>
-                  <div className="conflict-actions">
-                    <button
-                      className="secondary-button"
-                      disabled={profileBusy}
-                      onClick={() =>
-                        dispatchProfile({ type: 'set-account-deletion-open', value: false })
-                      }
-                    >
-                      취소
-                    </button>
-                    <button
-                      className="danger-button"
-                      disabled={
-                        profileBusy ||
-                        deletionConfirmation.trim() !== ACCOUNT_DELETION_CONFIRMATION ||
-                        !deletionAcknowledged.files ||
-                        !deletionAcknowledged.shares ||
-                        !deletionAcknowledged.passkeys
-                      }
-                      onClick={() => void deleteAccount()}
-                    >
-                      {profileBusy ? '삭제 요청 중…' : '계정 영구 삭제'}
-                    </button>
-                  </div>
-                </div>
+                          onClick={() => void deleteAccount()}
+                        >
+                          {profileBusy ? '삭제 요청 중…' : '계정 영구 삭제'}
+                        </UiButton>
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               )}
             </section>
           </div>

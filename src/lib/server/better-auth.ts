@@ -19,6 +19,10 @@ export type BetterAuthRuntime = {
 
 const defaultRuntime: BetterAuthRuntime = { nowMs: () => Date.now() };
 
+export function isPublicBetterAuthSignUpPath(pathname: string): boolean {
+  return pathname.replace(/\/+$/, '') === '/api/auth/sign-up/email';
+}
+
 function runtime(event: RequestEvent) {
   const env = event.platform?.env;
   if (!env) throw new Error('Cloudflare environment is not configured');
@@ -33,7 +37,8 @@ function passkeyContextSecret(event: RequestEvent): string {
 
 export function createBetterAuth(
   event: RequestEvent,
-  authRuntime: BetterAuthRuntime = defaultRuntime
+  authRuntime: BetterAuthRuntime = defaultRuntime,
+  allowInviteSignup = false
 ) {
   const env = runtime(event);
   const origin = appOrigin(event);
@@ -121,7 +126,7 @@ export function createBetterAuth(
     ],
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path === '/sign-up/email' && !ctx.headers?.get('x-gdrive-invite')) {
+        if (ctx.path === '/sign-up/email' && !allowInviteSignup) {
           throw new APIError('FORBIDDEN', { message: '초대 링크가 필요합니다.' });
         }
       })

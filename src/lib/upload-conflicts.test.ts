@@ -21,7 +21,7 @@ describe('upload conflict selection', () => {
     expect(conflicts).toEqual([{ id: 'first' }, { id: 'second' }]);
   });
 
-  it('keeps every non-conflicting file and queues every conflict', () => {
+  it('keeps every non-conflicting file and queues each conflicting filename once', () => {
     const incoming = [
       { name: '이미 있음.txt' },
       { name: '새 파일.txt' },
@@ -35,7 +35,7 @@ describe('upload conflict selection', () => {
     );
 
     expect(result.ready).toEqual([{ name: '새 파일.txt' }]);
-    expect(result.conflicts).toHaveLength(2);
+    expect(result.conflicts).toHaveLength(1);
     expect(result.conflicts[0]).toMatchObject({
       file: { name: '이미 있음.txt' },
       existing: { id: 'file-1' },
@@ -57,5 +57,20 @@ describe('upload conflict selection', () => {
     );
 
     expect(result).toEqual({ ready: [{ name: '폴더' }], conflicts: [] });
+  });
+
+  it('uploads only the first duplicate incoming filename', () => {
+    const incoming = [
+      { name: '새 파일.txt', content: 'first' },
+      { name: '새 파일.txt', content: 'duplicate' },
+      { name: '다른 파일.txt', content: 'other' }
+    ];
+
+    const result = splitUploadConflicts(incoming, [], () => false, null);
+
+    expect(result).toEqual({
+      ready: [incoming[0], incoming[2]],
+      conflicts: []
+    });
   });
 });

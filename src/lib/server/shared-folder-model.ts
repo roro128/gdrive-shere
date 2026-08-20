@@ -78,6 +78,25 @@ export function buildOwnedSharedFolderListing<T extends SharedFolderIdentity>(
   return decorateOwnedSharedFolder(folder, ownerName, toSharedWithNames([...accepted, ...pending]));
 }
 
+export function buildOwnedSharedFolderListings<T extends SharedFolderIdentity>(
+  folders: readonly T[],
+  ownerName: string,
+  recipients: readonly { folderId: string; displayName: string }[]
+): Array<T & SharedFolderListing> {
+  const namesByFolder = new Map<string, string[]>();
+  for (const recipient of recipients) {
+    const names = namesByFolder.get(recipient.folderId);
+    if (names) names.push(recipient.displayName);
+    else namesByFolder.set(recipient.folderId, [recipient.displayName]);
+  }
+
+  return folders
+    .map((folder) =>
+      decorateOwnedSharedFolder(folder, ownerName, namesByFolder.get(folder.id) ?? [])
+    )
+    .filter((folder): folder is T & SharedFolderListing => folder !== null);
+}
+
 export function toSharedFolderFile(folder: SharedFolderListing) {
   return {
     ...folder,

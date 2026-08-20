@@ -100,10 +100,9 @@ export async function registerMemberWithBetterAuth(
     .get();
   if (handleTaken) badRequest('이미 사용 중인 핸들입니다. 다른 핸들을 입력해주세요.');
 
-  const auth = createBetterAuth(event);
+  const auth = createBetterAuth(event, undefined, true);
   const result = await auth.api.signUpEmail({
-    body: buildBetterAuthRegistrationBody({ displayName, loginId, password: input.password }),
-    headers: new Headers({ 'x-gdrive-invite': '1' })
+    body: buildBetterAuthRegistrationBody({ displayName, loginId, password: input.password })
   });
 
   const user = buildLinkedMemberUser(

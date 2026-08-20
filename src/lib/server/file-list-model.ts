@@ -66,6 +66,17 @@ export type DriveFileSyncInput = {
   createdAt: string;
 };
 
+export type StoredDriveFileSync = {
+  drive_file_id: string;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  parent_drive_id: string | null;
+  owner_user_id: string | null;
+  trashed: number;
+  updated_at: string;
+};
+
 export type DriveFileSyncRuntime = {
   newId: () => string;
   now: () => string;
@@ -153,6 +164,44 @@ export function buildDriveFileSyncOperations(
   return inputs.map(({ file, id, createdAt }) =>
     toDriveFileSyncOperation(file, { ...context, id, createdAt })
   );
+}
+
+export function buildChangedDriveFileSyncOperations(
+  files: readonly ListedDriveFile[],
+  existing: ReadonlyMap<string, StoredDriveFileSync>,
+  context: {
+    parentId: string;
+    ownerUserId: string;
+    createdBy: string;
+    newId: () => string;
+    now: () => string;
+  }
+): DriveFileSyncOperation[] {
+  return files.flatMap((file) => {
+    const current = existing.get(file.id);
+    const metadata = toDriveFileSyncMetadata(file, context.parentId, context.ownerUserId);
+    const unchanged =
+      current &&
+      current.drive_file_id === metadata.drive_file_id &&
+      current.name === metadata.name &&
+      current.mime_type === metadata.mime_type &&
+      current.size_bytes === metadata.size_bytes &&
+      current.parent_drive_id === metadata.parent_drive_id &&
+      current.owner_user_id === metadata.owner_user_id &&
+      current.trashed === metadata.trashed &&
+      (!file.modifiedTime || current.updated_at === file.modifiedTime);
+    if (unchanged) return [];
+
+    return [
+      toDriveFileSyncOperation(file, {
+        parentId: context.parentId,
+        ownerUserId: context.ownerUserId,
+        createdBy: context.createdBy,
+        id: context.newId(),
+        createdAt: context.now()
+      })
+    ];
+  });
 }
 
 export function mapTrashedFiles(

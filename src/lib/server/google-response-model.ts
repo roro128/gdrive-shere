@@ -19,6 +19,7 @@ export type GoogleToken = {
 
 export type GoogleProfilePayload = {
   email?: string;
+  email_verified?: boolean;
   sub?: string;
   name?: string;
 };
@@ -26,6 +27,7 @@ export type GoogleProfilePayload = {
 export type GoogleConnection = {
   refreshToken: string | null;
   email: string | null;
+  emailVerified: boolean;
   subject: string | null;
   name: string | null;
 };
@@ -76,6 +78,7 @@ export function toGoogleConnection(
   return {
     refreshToken: tokenPayload.refresh_token ?? null,
     email: profilePayload?.email ?? null,
+    emailVerified: profilePayload?.email_verified === true,
     subject: profilePayload?.sub ?? null,
     name: profilePayload?.name ?? null
   };

@@ -14,6 +14,10 @@ import {
 } from '../../src/lib/handle-availability';
 import { fetchHandleAvailability } from '../../src/lib/handle-availability-client';
 import { registerInvite } from '../../src/lib/auth-client';
+import { Button } from '../../src/lib/components/ui/button';
+import { Card } from '../../src/lib/components/ui/card';
+import { Input } from '../../src/lib/components/ui/input';
+import { Label } from '../../src/lib/components/ui/label';
 import { initialInviteFormState, inviteFormReducer } from '../../src/lib/invite-form-model';
 
 export default function Invite() {
@@ -133,24 +137,24 @@ export default function Invite() {
 
   return (
     <main className="auth-shell">
-      <section className="auth-card">
+      <Card className="auth-card">
         <p className="eyebrow">INVITATION</p>
         <h1>GShare에 참여하세요</h1>
         <p className="muted">초대받은 멤버 계정을 만들면 파일 작업공간에 입장할 수 있습니다.</p>
         <form onSubmit={register}>
-          <label className="form-field">
+          <Label className="form-field">
             <span>이름</span>
-            <input
+            <Input
               required
               value={displayName}
               onChange={(event) =>
                 dispatch({ type: 'set-display-name', value: event.target.value })
               }
             />
-          </label>
-          <label className="form-field">
+          </Label>
+          <Label className="form-field">
             <span>아이디</span>
-            <input
+            <Input
               required
               autoComplete="username"
               value={loginId}
@@ -162,7 +166,7 @@ export default function Invite() {
                 })
               }
             />
-          </label>
+          </Label>
           {handleAvailability === 'checking' && (
             <p className="form-hint">아이디 사용 가능 여부를 확인하는 중…</p>
           )}
@@ -175,9 +179,9 @@ export default function Invite() {
           {handleAvailability === 'invalid' && (
             <p className="modal-error">영문 소문자, 숫자, ., _, -로 3~32자를 입력해주세요.</p>
           )}
-          <label className="form-field">
+          <Label className="form-field">
             <span>비밀번호</span>
-            <input
+            <Input
               required
               minLength={8}
               type="password"
@@ -185,10 +189,10 @@ export default function Invite() {
               value={password}
               onChange={(event) => dispatch({ type: 'set-password', value: event.target.value })}
             />
-          </label>
-          <label className="form-field">
+          </Label>
+          <Label className="form-field">
             <span>비밀번호 확인</span>
-            <input
+            <Input
               required
               minLength={8}
               type="password"
@@ -198,9 +202,9 @@ export default function Invite() {
                 dispatch({ type: 'set-password-confirm', value: event.target.value })
               }
             />
-          </label>
+          </Label>
           {message && <p className="modal-error">{message}</p>}
-          <button
+          <Button
             className="primary-button"
             disabled={
               busy ||
@@ -212,13 +216,13 @@ export default function Invite() {
             type="submit"
           >
             {busy ? '계정 생성 중…' : '계정 만들기'}
-          </button>
+          </Button>
         </form>
         {!token && <p className="modal-error">초대 링크가 없습니다.</p>}
         <a className="text-button" href={mockMode ? '/?mock=1' : '/'}>
           로그인으로 돌아가기
         </a>
-      </section>
+      </Card>
     </main>
   );
 }

@@ -1,8 +1,9 @@
 import type { RequestEvent } from '$lib/server/runtime';
+import type { GoogleConnectionStatus } from '$lib/google-connection-status';
 import { decrypt, encrypt } from './crypto';
 import { getSetting, setSetting, type UploadSessionRow } from './db';
-import { badRequest } from './http';
-import { parseGoogleJson } from './google-http-model';
+import { badRequest, payloadTooLarge } from './http';
+import { GoogleApiError, parseGoogleJson } from './google-http-model';
 import {
   buildDriveFileUpdateRequest,
   buildDriveFolderBody,
@@ -21,6 +22,7 @@ import {
   type GoogleProfilePayload,
   type GoogleTokenPayload
 } from './google-response-model';
+import { validateUploadChunk } from './upload-utils';
 
 export type { GoogleConnection } from './google-response-model';
 
@@ -28,6 +30,7 @@ const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3/files';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
+const accessTokenRequests = new WeakMap<RequestEvent, Promise<string>>();
 
 function env(event: RequestEvent): Env {
   if (!event.platform?.env) throw new Error('Cloudflare environment is not configured');
@@ -55,7 +58,7 @@ async function storedRefreshToken(event: RequestEvent): Promise<string | null> {
   return encrypted ? decrypt(encrypted, encryptionSecret(event)) : null;
 }
 
-async function accessToken(event: RequestEvent): Promise<string> {
+async function refreshAccessToken(event: RequestEvent): Promise<string> {
   const refreshToken = await storedRefreshToken(event);
   if (!refreshToken) throw new Error('Google Drive가 아직 연결되지 않았습니다.');
   const { clientId, clientSecret } = googleConfig(event);
@@ -69,16 +72,36 @@ async function accessToken(event: RequestEvent): Promise<string> {
       grant_type: 'refresh_token'
     })
   });
-  if (!response.ok) throw new Error('Google access token을 갱신하지 못했습니다.');
   const token = toGoogleToken(await responseJson<GoogleTokenPayload>(response));
   if (!token.accessToken) throw new Error('Google access token이 응답되지 않았습니다.');
+  if (token.refreshToken && token.refreshToken !== refreshToken) {
+    await setSetting(
+      event,
+      'google_refresh_token',
+      await encrypt(token.refreshToken, encryptionSecret(event))
+    );
+  }
   return token.accessToken;
 }
 
-async function googleFetch(
+async function accessToken(event: RequestEvent): Promise<string> {
+  const existing = accessTokenRequests.get(event);
+  if (existing) return existing;
+
+  const request = refreshAccessToken(event);
+  accessTokenRequests.set(event, request);
+  try {
+    return await request;
+  } catch (cause) {
+    accessTokenRequests.delete(event);
+    throw cause;
+  }
+}
+
+async function googleRequest(
   event: RequestEvent,
   url: string,
-  init: RequestInit = {}
+  init: RequestInit
 ): Promise<Response> {
   const token = await accessToken(event);
   const headers = new Headers(init.headers);
@@ -89,6 +112,19 @@ async function googleFetch(
       ? `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(apiKey)}`
       : url;
   return fetch(target, { ...init, headers });
+}
+
+async function googleFetch(
+  event: RequestEvent,
+  url: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const response = await googleRequest(event, url, init);
+  if (response.status !== 401) return response;
+
+  await response.body?.cancel();
+  accessTokenRequests.delete(event);
+  return googleRequest(event, url, init);
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
@@ -182,8 +218,29 @@ export async function ensureRootFolder(event: RequestEvent): Promise<string> {
   return folder.id;
 }
 
+export async function getGoogleConnectionStatus(
+  event: RequestEvent
+): Promise<GoogleConnectionStatus> {
+  if (!(await getSetting(event, 'google_refresh_token'))) return 'missing';
+  try {
+    const response = await googleFetch(event, `${DRIVE_API}/about?fields=storageQuota`);
+    if (response.ok) {
+      await response.arrayBuffer();
+      return 'connected';
+    }
+    const error = new GoogleApiError(response.status, await response.text());
+    return error.status === 401 || error.reason === 'invalid_grant'
+      ? 'reauthorization-required'
+      : 'unavailable';
+  } catch (cause) {
+    return cause instanceof GoogleApiError && cause.reason === 'invalid_grant'
+      ? 'reauthorization-required'
+      : 'unavailable';
+  }
+}
+
 export async function driveConnected(event: RequestEvent): Promise<boolean> {
-  return Boolean(await getSetting(event, 'google_refresh_token'));
+  return (await getGoogleConnectionStatus(event)) === 'connected';
 }
 
 export type DriveStorageQuota = {
@@ -304,7 +361,7 @@ export async function createUploadSession(
     },
     body: uploadRequest.body
   });
-  if (!response.ok) throw new Error(`Google upload session ${response.status}`);
+  if (!response.ok) throw new GoogleApiError(response.status, await response.text());
   const location = response.headers.get('location');
   if (!location) throw new Error('Google upload session URL이 없습니다.');
   return { location };
@@ -317,11 +374,18 @@ export async function uploadChunk(
   if (!event.request.body) badRequest('업로드 chunk 본문이 없습니다.');
   const contentLength = event.request.headers.get('content-length');
   const contentRange = event.request.headers.get('content-range');
-  if (!contentLength || (session.total_bytes > 0 && !contentRange))
-    badRequest('Content-Length와 Content-Range가 필요합니다.');
+  const validation = validateUploadChunk(contentLength, contentRange, session.total_bytes);
+  if (!validation.valid) {
+    if (validation.status === 413) payloadTooLarge(validation.message);
+    badRequest(validation.message);
+  }
   return fetch(session.drive_session_url, {
     method: 'PUT',
-    headers: buildUploadChunkHeaders(contentLength, session.mime_type, contentRange ?? undefined),
+    headers: buildUploadChunkHeaders(
+      String(validation.contentLength),
+      session.mime_type,
+      contentRange ?? undefined
+    ),
     body: event.request.body
   });
 }
@@ -342,7 +406,7 @@ export async function downloadDriveFile(event: RequestEvent, fileId: string): Pr
   );
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Google download ${response.status}: ${text.slice(0, 300)}`);
+    throw new GoogleApiError(response.status, text);
   }
   return response;
 }

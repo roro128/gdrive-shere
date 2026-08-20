@@ -4,18 +4,23 @@ import { requireUser } from '$lib/server/auth';
 import { decrypt } from '$lib/server/crypto';
 import { database, newId, now, type UploadSessionRow } from '$lib/server/db';
 import { queryUploadSession, uploadChunk } from '$lib/server/google';
+import { GoogleApiError, googleApiUserMessage } from '$lib/server/google-http-model';
 import { assertSameOrigin, notFound, ok } from '$lib/server/http';
 import { completedBytesFromRange, parseByteRange } from '$lib/server/upload-utils';
 import {
   isCompletedUploadResponse,
   buildCompletedUploadPersistence,
+  isActiveUploadSession,
   resolveReceivedBytes,
   toCancelledUploadUpdate,
   toUploadProgressUpdate
 } from '$lib/server/upload-session-model';
 import { driveFiles, uploadSessions } from '$lib/server/drizzle/auth-schema';
 
-async function ownedSession(event: Parameters<RequestHandler>[0]): Promise<UploadSessionRow> {
+async function ownedSession(
+  event: Parameters<RequestHandler>[0],
+  writable = false
+): Promise<UploadSessionRow> {
   const user = await requireUser(event);
   const row = (await database(event)
     .select()
@@ -25,11 +30,21 @@ async function ownedSession(event: Parameters<RequestHandler>[0]): Promise<Uploa
   if (!row) notFound('업로드 세션을 찾을 수 없습니다.');
   const secret = event.platform?.env.APP_ENCRYPTION_KEY;
   if (!secret) throw new Error('APP_ENCRYPTION_KEY is not configured');
-  return { ...row, drive_session_url: await decrypt(row.drive_session_url, secret) };
+  const active = isActiveUploadSession(row.status, row.expires_at, now());
+  if (writable && !active) notFound('만료되었거나 종료된 업로드 세션입니다.');
+  return { ...row, drive_session_url: active ? await decrypt(row.drive_session_url, secret) : '' };
 }
 
 export const GET: RequestHandler = async (event) => {
   const session = await ownedSession(event);
+  const active = isActiveUploadSession(session.status, session.expires_at, now());
+  if (!active)
+    return ok({
+      uploadId: session.id,
+      status: session.status === 'active' ? 'expired' : session.status,
+      receivedBytes: session.received_bytes,
+      totalBytes: session.total_bytes
+    });
   const upstream = await queryUploadSession(session);
   const range = upstream.headers.get('range');
   const received = resolveReceivedBytes(
@@ -54,7 +69,7 @@ export const GET: RequestHandler = async (event) => {
 
 export const PUT: RequestHandler = async (event) => {
   assertSameOrigin(event.request, event.url.origin);
-  const session = await ownedSession(event);
+  const session = await ownedSession(event, true);
   const upstream = await uploadChunk(event, session);
   const range = upstream.headers.get('range');
   const contentRange = event.request.headers.get('content-range');
@@ -109,10 +124,8 @@ export const PUT: RequestHandler = async (event) => {
     .where(eq(uploadSessions.id, session.id))
     .run();
   if (!upstream.ok && upstream.status !== 308) {
-    return new Response(await upstream.text(), {
-      status: upstream.status,
-      headers: { 'content-type': 'text/plain' }
-    });
+    const error = new GoogleApiError(upstream.status, await upstream.text());
+    return Response.json({ message: googleApiUserMessage(error) }, { status: 502 });
   }
   return ok({
     uploadId: session.id,
@@ -124,7 +137,7 @@ export const PUT: RequestHandler = async (event) => {
 
 export const DELETE: RequestHandler = async (event) => {
   assertSameOrigin(event.request, event.url.origin);
-  const session = await ownedSession(event);
+  const session = await ownedSession(event, true);
   await database(event)
     .update(uploadSessions)
     .set(toCancelledUploadUpdate(now()))

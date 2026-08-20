@@ -112,6 +112,29 @@ describe('workspace collection model', () => {
     ]);
   });
 
+  it('computes each name sort key once instead of during every comparison', () => {
+    let nameReads = 0;
+    const sortableFiles = Array.from({ length: 32 }, (_, index) => {
+      const file = {
+        id: `file-${index}`,
+        mimeType: 'text/plain',
+        size: String(index),
+        modifiedTime: `2026-01-${String(index + 1).padStart(2, '0')}`
+      } as { id: string; name: string; mimeType: string; size: string; modifiedTime: string };
+      Object.defineProperty(file, 'name', {
+        get() {
+          nameReads += 1;
+          return `File ${index}`;
+        }
+      });
+      return file;
+    });
+
+    sortWorkspaceFiles(sortableFiles, 'name', false);
+
+    expect(nameReads).toBe(sortableFiles.length);
+  });
+
   it('Given uploads with invalid progress When summarized Then only active values are clamped', () => {
     expect(
       summarizeActiveUploads([

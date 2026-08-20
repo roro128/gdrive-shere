@@ -3,7 +3,8 @@ import {
   completedBytesFromRange,
   parseByteRange,
   retryDelay,
-  UPLOAD_CHUNK_SIZE
+  UPLOAD_CHUNK_SIZE,
+  validateUploadChunk
 } from './upload-utils';
 
 describe('upload range helpers', () => {
@@ -29,5 +30,23 @@ describe('upload range helpers', () => {
   it('caps exponential retry delays', () => {
     expect(retryDelay(0)).toBe(250);
     expect(retryDelay(10)).toBe(10_000);
+  });
+
+  it('rejects chunks that do not match the upload session or exceed the server limit', () => {
+    expect(validateUploadChunk('5', 'bytes 0-4/10', 10)).toMatchObject({
+      valid: true,
+      contentLength: 5
+    });
+    expect(validateUploadChunk('4', 'bytes 0-4/10', 10)).toMatchObject({
+      valid: false,
+      status: 400
+    });
+    expect(
+      validateUploadChunk(String(UPLOAD_CHUNK_SIZE + 1), 'bytes 0-8388608/10000000', 10_000_000)
+    ).toMatchObject({
+      valid: false,
+      status: 413
+    });
+    expect(validateUploadChunk('0', null, 0)).toMatchObject({ valid: true, contentLength: 0 });
   });
 });

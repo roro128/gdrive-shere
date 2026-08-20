@@ -1,5 +1,16 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["src/lib/server/trash-cleanup.ts"],
-  "project": ["app/**/*.{ts,tsx}", "src/**/*.ts", "*.{js,ts}"]
+  "entry": [
+    "app/routes/**/*.tsx",
+    "src/lib/server/trash-cleanup.ts",
+    "src/lib/google-connection-status.ts",
+    "src/lib/server/google-maintenance.ts",
+    "src/lib/utils.ts",
+    "src/lib/components/ui/**/*.tsx",
+    "src/lib/components/{floating-action-bar,skeleton}.tsx",
+    "e2e/**/*.ts"
+  ],
+  "project": ["app/**/*.{ts,tsx}", "src/**/*.ts", "scripts/**/*.ts", "*.{js,ts}", "e2e/**/*.ts"],
+  "ignoreDependencies": ["tailwindcss", "tw-animate-css"],
+  "ignoreExportsUsedInFile": true
 }

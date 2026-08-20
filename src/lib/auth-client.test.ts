@@ -12,11 +12,22 @@ describe('auth client', () => {
     await expect(
       fetchCurrentUser<{ id: string }>(async (input) => {
         expect(input).toBe('/api/me');
-        return new Response(JSON.stringify({ user: { id: 'user-1' }, googleConnected: 1 }), {
-          status: 200
-        });
+        return new Response(
+          JSON.stringify({
+            user: { id: 'user-1' },
+            googleConnected: 1,
+            googleConnectionStatus: 'reauthorization-required'
+          }),
+          {
+            status: 200
+          }
+        );
       })
-    ).resolves.toEqual({ user: { id: 'user-1' }, googleConnected: false });
+    ).resolves.toEqual({
+      user: { id: 'user-1' },
+      googleConnected: false,
+      googleConnectionStatus: 'reauthorization-required'
+    });
     await expect(
       fetchCurrentUser(async () => new Response(null, { status: 401 }))
     ).resolves.toBeNull();
