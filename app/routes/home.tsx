@@ -81,6 +81,7 @@ import { createShareLink } from '../../src/lib/share-link-client';
 import type { GoogleConnectionStatus } from '../../src/lib/google-connection-status';
 import {
   fetchCurrentUser,
+  loginLegacyPassword,
   logout as logoutAuth,
   requestPasswordReset
 } from '../../src/lib/auth-client';
@@ -429,12 +430,19 @@ function AuthCard() {
         username: normalizeHandle(loginId),
         password
       });
-      if (result.error)
-        dispatch({
-          type: 'set-error',
-          message: result.error.message ?? '로그인 정보가 올바르지 않습니다.'
-        });
-      else location.reload();
+      if (result.error) {
+        try {
+          await loginLegacyPassword(fetch, loginId, password);
+          location.reload();
+        } catch {
+          dispatch({
+            type: 'set-error',
+            message: result.error.message ?? '로그인 정보가 올바르지 않습니다.'
+          });
+        }
+      } else {
+        location.reload();
+      }
     } catch (cause) {
       dispatch({
         type: 'set-error',

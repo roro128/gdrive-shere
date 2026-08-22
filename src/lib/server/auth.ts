@@ -274,6 +274,32 @@ async function userForInvite(
   return user;
 }
 
+async function authenticateMemberPassword(
+  event: RequestEvent,
+  input: { loginId?: string; password?: string }
+): Promise<UserRow> {
+  if (!input.loginId || !input.password) unauthorized('아이디와 비밀번호를 입력해주세요.');
+  const loginId = normalizeLoginId(input.loginId);
+  const user = (await database(event)
+    .select()
+    .from(users)
+    .where(and(eq(users.login_id, loginId), eq(users.role, 'member'), eq(users.status, 'active')))
+    .get()) as UserRow | null;
+  const valid = Boolean(
+    user?.password_hash && (await verifyPassword(input.password, user.password_hash))
+  );
+  if (!user || !valid) unauthorized('아이디 또는 비밀번호가 올바르지 않습니다.');
+  return user;
+}
+
+export async function loginWithLegacyPassword(
+  event: RequestEvent,
+  input: { loginId?: string; password?: string }
+): Promise<void> {
+  const user = await authenticateMemberPassword(event, input);
+  await createSession(event, user.id);
+}
+
 export async function registrationOptions(
   event: RequestEvent,
   input: { displayName?: string; inviteToken?: string; loginId?: string; password?: string }
@@ -371,17 +397,7 @@ export async function passwordAuthenticationOptions(
   event: RequestEvent,
   input: { loginId?: string; password?: string }
 ) {
-  if (!input.loginId || !input.password) unauthorized('아이디와 비밀번호를 입력해주세요.');
-  const loginId = normalizeLoginId(input.loginId);
-  const user = (await database(event)
-    .select()
-    .from(users)
-    .where(and(eq(users.login_id, loginId), eq(users.role, 'member'), eq(users.status, 'active')))
-    .get()) as UserRow | null;
-  const valid = Boolean(
-    user?.password_hash && (await verifyPassword(input.password, user.password_hash))
-  );
-  if (!user || !valid) unauthorized('아이디 또는 비밀번호가 올바르지 않습니다.');
+  const user = await authenticateMemberPassword(event, input);
 
   const userPasskeys = await database(event)
     .select({ credential_id: passkeys.credential_id, transports: passkeys.transports })

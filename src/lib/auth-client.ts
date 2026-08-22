@@ -41,6 +41,14 @@ export function requestPasswordReset(request: AuthRequest, loginId: string): Pro
   return postJson(request, '/api/auth/password/reset-request', { loginId });
 }
 
+export function loginLegacyPassword(
+  request: AuthRequest,
+  loginId: string,
+  password: string
+): Promise<void> {
+  return postJson(request, '/api/auth/password/login', { loginId, password });
+}
+
 export function registerInvite(request: AuthRequest, body: Record<string, unknown>): Promise<void> {
   return postJson(request, '/api/auth/better/register', body);
 }

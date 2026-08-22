@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   fetchCurrentUser,
+  loginLegacyPassword,
   logout,
   registerInvite,
   requestPasswordReset,
@@ -60,5 +61,32 @@ describe('auth client', () => {
         'member'
       )
     ).rejects.toThrow('request failed');
+  });
+
+  it('logs in legacy accounts through the compatibility endpoint', async () => {
+    const request = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+
+    await expect(
+      loginLegacyPassword(request, '  member  ', 'correct horse battery staple')
+    ).resolves.toBeUndefined();
+
+    expect(request).toHaveBeenCalledWith('/api/auth/password/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ loginId: '  member  ', password: 'correct horse battery staple' })
+    });
+  });
+
+  it('does not hide a failed legacy login', async () => {
+    await expect(
+      loginLegacyPassword(
+        async () =>
+          new Response(JSON.stringify({ message: '아이디 또는 비밀번호가 올바르지 않습니다.' }), {
+            status: 401
+          }),
+        'member',
+        'wrong password'
+      )
+    ).rejects.toThrow('아이디 또는 비밀번호가 올바르지 않습니다.');
   });
 });
