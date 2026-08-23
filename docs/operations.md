@@ -48,7 +48,7 @@ health 응답에서 `database: true`, `googleConnected: true`를 확인한다. `
 경로에서만 생성된다. POST·PUT·PATCH·DELETE 요청은 same-origin `Origin`이 없거나 다르면
 거부된다. 파일 inline 미리보기는 text/plain으로 제한되어 HTML을 실행하지 않는다.
 
-ID·비밀번호 로그인은 Better Auth 실패 후 `users.password_hash` 또는 연결된 `auth_account`의 credential password 호환 경로를 한 번 시도한다. 이 경로도 실패하면 기존 Better Auth 오류를 표시하며, 계정이 비활성화된 경우에는 로그인할 수 없다.
+ID·비밀번호 로그인은 Better Auth 실패 후 연결된 `auth_account`의 credential password를 우선 검증하고, 연결 계정에 credential이 없을 때만 `users.password_hash`를 fallback으로 사용하는 호환 경로를 한 번 시도한다. 이 경로도 실패하면 기존 Better Auth 오류를 표시하며, 계정이 비활성화된 경우에는 로그인할 수 없다.
 
 Google Drive 인증은 OAuth callback에서 발급받은 refresh token만 D1에 암호화해 보관한다. 파일
 요청마다 access token을 갱신하고, Drive가 만료된 access token으로 401을 반환하면 새 token으로

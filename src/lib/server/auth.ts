@@ -279,6 +279,14 @@ async function authenticateMemberPassword(
   event: RequestEvent,
   input: { loginId?: string; password?: string }
 ): Promise<UserRow> {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    (input.loginId !== undefined && typeof input.loginId !== 'string') ||
+    (input.password !== undefined && typeof input.password !== 'string')
+  )
+    badRequest('아이디와 비밀번호를 입력해주세요.');
   if (!input.loginId || !input.password) unauthorized('아이디와 비밀번호를 입력해주세요.');
   const loginId = normalizeLoginId(input.loginId);
   const db = database(event);
@@ -287,22 +295,17 @@ async function authenticateMemberPassword(
     .from(users)
     .where(and(eq(users.login_id, loginId), eq(users.role, 'member'), eq(users.status, 'active')))
     .get()) as UserRow | null;
-  const passwordHash =
-    user?.password_hash ??
-    (user?.auth_user_id
-      ? (
-          await db
-            .select({ password: authAccount.password })
-            .from(authAccount)
-            .where(
-              and(
-                eq(authAccount.userId, user.auth_user_id),
-                eq(authAccount.providerId, 'credential')
-              )
-            )
-            .get()
-        )?.password
-      : null);
+  const passwordHash = user?.auth_user_id
+    ? ((
+        await db
+          .select({ password: authAccount.password })
+          .from(authAccount)
+          .where(
+            and(eq(authAccount.userId, user.auth_user_id), eq(authAccount.providerId, 'credential'))
+          )
+          .get()
+      )?.password ?? user.password_hash)
+    : user?.password_hash;
   const valid = Boolean(
     user && passwordHash && (await verifyPassword(input.password, passwordHash))
   );

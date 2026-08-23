@@ -35,7 +35,7 @@ OAuth state와 `bootstrap`/`login`/`connect` 모드는 D1 전역 설정이 아�
 2. 사용자가 `/invite/<token>`에서 표시 이름, ID, 비밀번호를 입력한다.
 3. Better Auth username/password 계정을 만들고, Drizzle adapter를 통해 D1의 account 테이블에 비밀번호를 저장한다. D1 배치 트랜잭션에서 도메인 사용자 생성과 초대키 `used_at` 기록을 함께 수행하므로 같은 키로 두 번째 계정을 만들 수 없다.
 4. 초대 계정은 패스키 없이도 즉시 active가 되고 Better Auth session cookie가 발급된다. 패스키는 가입 후 **내 정보**에서 선택적으로 등록한다.
-5. 이후 사용자는 ID·비밀번호 또는 등록한 패스키 중 하나로 로그인한다. 로그인 호환 경로는 기존 `users.password_hash`와 Better Auth로 연결된 `auth_account`의 credential password를 모두 검증하고 레거시 `gdrive_session`을 발급한다. 내 정보에서는 자신의 패스키를 등록하거나 제거할 수 있다. 패스키 제거 시 서버에서 credential을 폐기한 뒤, 지원 브라우저에는 WebAuthn Level 3 `signalAllAcceptedCredentials()`로 현재 유효한 credential 목록을 인증기에 전달한다. 지원하지 않는 브라우저·OS에서는 기기 패스키 관리자에서 직접 삭제해야 한다.
+5. 이후 사용자는 ID·비밀번호 또는 등록한 패스키 중 하나로 로그인한다. 로그인 호환 경로는 연결된 `auth_account`의 credential password를 기준으로 검증하고, 연결 계정에 credential이 없을 때만 기존 `users.password_hash`를 fallback으로 사용한 뒤 레거시 `gdrive_session`을 발급한다. 내 정보에서는 자신의 패스키를 등록하거나 제거할 수 있다. 패스키 제거 시 서버에서 credential을 폐기한 뒤, 지원 브라우저에는 WebAuthn Level 3 `signalAllAcceptedCredentials()`로 현재 유효한 credential 목록을 인증기에 전달한다. 지원하지 않는 브라우저·OS에서는 기기 패스키 관리자에서 직접 삭제해야 한다.
 6. 로그아웃은 Better Auth 세션과 레거시 `gdrive_session`을 같은 요청에서 모두 종료한다. 이후에는 브라우저 history 대신 `replace`로 로그인 화면을 열어, 뒤로 가기나 새로고침으로 이전 작업공간이 다시 표시되지 않게 한다.
 
 ### 내 정보와 프로필 수정
