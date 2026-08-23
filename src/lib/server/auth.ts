@@ -19,6 +19,7 @@ import {
   type UserStatus
 } from './db';
 import {
+  authAccount,
   invitations,
   legacySessions,
   passkeys,
@@ -280,13 +281,30 @@ async function authenticateMemberPassword(
 ): Promise<UserRow> {
   if (!input.loginId || !input.password) unauthorized('아이디와 비밀번호를 입력해주세요.');
   const loginId = normalizeLoginId(input.loginId);
-  const user = (await database(event)
+  const db = database(event);
+  const user = (await db
     .select()
     .from(users)
     .where(and(eq(users.login_id, loginId), eq(users.role, 'member'), eq(users.status, 'active')))
     .get()) as UserRow | null;
+  const passwordHash =
+    user?.password_hash ??
+    (user?.auth_user_id
+      ? (
+          await db
+            .select({ password: authAccount.password })
+            .from(authAccount)
+            .where(
+              and(
+                eq(authAccount.userId, user.auth_user_id),
+                eq(authAccount.providerId, 'credential')
+              )
+            )
+            .get()
+        )?.password
+      : null);
   const valid = Boolean(
-    user?.password_hash && (await verifyPassword(input.password, user.password_hash))
+    user && passwordHash && (await verifyPassword(input.password, passwordHash))
   );
   if (!user || !valid) unauthorized('아이디 또는 비밀번호가 올바르지 않습니다.');
   return user;

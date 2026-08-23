@@ -20,14 +20,18 @@ function event(cookies = { get: vi.fn(), set: vi.fn(), delete: vi.fn() }): Reque
   } as unknown as RequestEvent;
 }
 
-function databaseWithUser(user: unknown) {
+function databaseWithUser(user: unknown, credentialPassword?: string) {
   const insertValues = vi.fn().mockReturnValue({
     run: vi.fn().mockResolvedValue({ meta: { changes: 1 } })
   });
+  const get = vi
+    .fn()
+    .mockResolvedValueOnce(user)
+    .mockResolvedValueOnce(credentialPassword ? { password: credentialPassword } : null);
   const db = {
     select: () => ({
       from: () => ({
-        where: () => ({ get: vi.fn().mockResolvedValue(user) })
+        where: () => ({ get })
       })
     }),
     insert: () => ({ values: insertValues })
@@ -77,5 +81,30 @@ describe('legacy password login compatibility', () => {
       loginWithLegacyPassword(event(), { loginId: 'member', password: 'wrong password' })
     ).rejects.toMatchObject({ status: 401 });
     expect(insertValues).not.toHaveBeenCalled();
+  });
+
+  it('accepts a linked account whose password is stored in Better Auth', async () => {
+    const passwordHash = await hashPassword('correct horse battery staple');
+    const insertValues = databaseWithUser(
+      {
+        id: 'linked-user-1',
+        role: 'member',
+        status: 'active',
+        login_id: 'member',
+        password_hash: null,
+        auth_user_id: 'auth-user-1'
+      },
+      passwordHash
+    );
+    const cookies = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
+
+    await loginWithLegacyPassword(event(cookies), {
+      loginId: 'member',
+      password: 'correct horse battery staple'
+    });
+
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'linked-user-1', token_hash: expect.any(String) })
+    );
   });
 });
