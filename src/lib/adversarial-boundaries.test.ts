@@ -4,24 +4,38 @@ import { buildFileResponseHeaders } from './file-response-model';
 import { mergeSharePermissions, mergeShareSearchResults } from './share-state';
 import { buildDriveListUrl } from './server/google-request-model';
 import { toDriveFileSyncMetadata } from './server/file-list-model';
-import { normalizeUploadSessionInput } from './server/upload-session-model';
+import {
+  normalizeUploadSessionInput,
+  resolveReceivedBytes,
+  toUploadProgressUpdate
+} from './server/upload-session-model';
 
 describe('adversarial boundary behavior', () => {
   it('rejects malformed upload session roots and blank names', () => {
     expect(normalizeUploadSessionInput(null as never)).toBeNull();
     expect(normalizeUploadSessionInput([] as never)).toBeNull();
     expect(normalizeUploadSessionInput({ name: '   ', size: 0 })).toBeNull();
-    expect(normalizeUploadSessionInput({ name: { toString: () => 'file' }, size: 0 } as never)).toBe(
-      null
-    );
+    expect(
+      normalizeUploadSessionInput({ name: { toString: () => 'file' }, size: 0 } as never)
+    ).toBe(null);
+    expect(normalizeUploadSessionInput({ name: ' file ', size: 0, parentId: ' parent ' })).toEqual({
+      name: 'file',
+      mimeType: 'application/octet-stream',
+      size: 0,
+      parentId: 'parent',
+      conflictAction: undefined,
+      existingFileId: undefined
+    });
   });
 
   it('rejects upload session fields with the wrong runtime types', () => {
+    expect(normalizeUploadSessionInput({ name: 'file', size: 0, mimeType: 7 } as never)).toBeNull();
+    expect(normalizeUploadSessionInput({ name: 'file', size: 0, parentId: 7 } as never)).toBeNull();
     expect(
-      normalizeUploadSessionInput({ name: 'file', size: 0, mimeType: 7 } as never)
+      normalizeUploadSessionInput({ name: 'file', size: 0, conflictAction: 'delete' } as never)
     ).toBeNull();
     expect(
-      normalizeUploadSessionInput({ name: 'file', size: 0, parentId: 7 } as never)
+      normalizeUploadSessionInput({ name: 'file', size: 0, existingFileId: 7 } as never)
     ).toBeNull();
   });
 
@@ -55,6 +69,14 @@ describe('adversarial boundary behavior', () => {
     ).toBe(0);
   });
 
+  it('does not persist NaN upload progress or accept it as upstream progress', () => {
+    expect(toUploadProgressUpdate(Number.NaN, 'updated')).toEqual({
+      received_bytes: 0,
+      updated_at: 'updated'
+    });
+    expect(resolveReceivedBytes(Number.NaN, 3, 20)).toBe(4);
+  });
+
   it('falls back from a control-character MIME value before building headers', () => {
     expect(
       buildFileResponseHeaders('application/octet-stream\r\nX-Leak: yes', 'file.bin', 'attachment')
@@ -63,10 +85,13 @@ describe('adversarial boundary behavior', () => {
 
   it('deduplicates unknown users when merging share grants', () => {
     expect(
-      mergeSharePermissions([], [
-        { userId: 'user-1', displayName: 'First', permission: 'viewer' },
-        { userId: 'user-1', displayName: 'Last', permission: 'editor' }
-      ])
+      mergeSharePermissions(
+        [],
+        [
+          { userId: 'user-1', displayName: 'First', permission: 'viewer' },
+          { userId: 'user-1', displayName: 'Last', permission: 'editor' }
+        ]
+      )
     ).toEqual([
       {
         id: 'user-1',

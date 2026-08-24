@@ -14,12 +14,20 @@ export function canEditFileItem(
   googleConnected: boolean | undefined
 ) {
   return (
-    googleConnected !== false && !file.isAdminSpace && file.permission !== 'viewer' && !file.trashed
+    googleConnected !== false &&
+    !file.isAdminSpace &&
+    (file.permission === 'owner' || file.permission === 'editor') &&
+    !file.trashed
   );
 }
 
 export function canTrashFileItem(file: TrashableFile) {
-  if (file.isAdminSpace || file.trashed || file.permission === 'viewer') return false;
+  if (
+    file.isAdminSpace ||
+    file.trashed ||
+    (file.permission !== 'owner' && file.permission !== 'editor')
+  )
+    return false;
   if (file.sharedByMe || file.sharedRoot) return false;
   return true;
 }

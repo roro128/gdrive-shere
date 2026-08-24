@@ -35,24 +35,33 @@ export function isActiveUploadSession(
   return status === 'active' && expiresAt > currentTime;
 }
 
-export function normalizeUploadSessionInput(
-  input: UploadSessionInput
-): NormalizedUploadSessionInput | null {
+export function normalizeUploadSessionInput(input: unknown): NormalizedUploadSessionInput | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const candidate = input as UploadSessionInput;
+  const name = typeof candidate.name === 'string' ? candidate.name.trim() : '';
   if (
-    !input.name ||
-    typeof input.size !== 'number' ||
-    !Number.isSafeInteger(input.size) ||
-    input.size < 0
+    !name ||
+    typeof candidate.size !== 'number' ||
+    !Number.isSafeInteger(candidate.size) ||
+    candidate.size < 0 ||
+    (candidate.mimeType !== undefined && typeof candidate.mimeType !== 'string') ||
+    (candidate.parentId !== undefined &&
+      candidate.parentId !== null &&
+      typeof candidate.parentId !== 'string') ||
+    (candidate.conflictAction !== undefined &&
+      candidate.conflictAction !== 'replace' &&
+      candidate.conflictAction !== 'overwrite') ||
+    (candidate.existingFileId !== undefined && typeof candidate.existingFileId !== 'string')
   )
     return null;
 
   return {
-    name: input.name,
-    mimeType: input.mimeType || 'application/octet-stream',
-    size: input.size,
-    parentId: input.parentId || null,
-    conflictAction: input.conflictAction,
-    existingFileId: input.existingFileId
+    name,
+    mimeType: candidate.mimeType?.trim() || 'application/octet-stream',
+    size: candidate.size,
+    parentId: candidate.parentId?.trim() || null,
+    conflictAction: candidate.conflictAction,
+    existingFileId: candidate.existingFileId?.trim() || undefined
   };
 }
 
@@ -125,7 +134,7 @@ export function isCompletedUploadResponse(status: number): boolean {
 
 export function toUploadProgressUpdate(receivedBytes: number, updatedAt: string) {
   return {
-    received_bytes: Math.max(0, receivedBytes),
+    received_bytes: Number.isFinite(receivedBytes) ? Math.max(0, receivedBytes) : 0,
     updated_at: updatedAt
   };
 }
@@ -197,8 +206,13 @@ export function resolveReceivedBytes(
   requestedEndByte: number | null,
   fallbackBytes: number
 ): number {
-  return Math.max(
-    0,
-    upstreamReceivedBytes ?? (requestedEndByte === null ? fallbackBytes : requestedEndByte + 1)
-  );
+  const fallback =
+    requestedEndByte === null || !Number.isFinite(requestedEndByte)
+      ? fallbackBytes
+      : requestedEndByte + 1;
+  const received =
+    upstreamReceivedBytes === null || !Number.isFinite(upstreamReceivedBytes)
+      ? fallback
+      : upstreamReceivedBytes;
+  return Number.isFinite(received) ? Math.max(0, received) : 0;
 }

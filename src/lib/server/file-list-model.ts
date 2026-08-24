@@ -100,11 +100,12 @@ export function toDriveFileSyncMetadata(
   parentId: string,
   ownerUserId: string
 ): DriveFileSyncMetadata {
+  const size = Number(file.size ?? 0);
   return {
     drive_file_id: file.id,
     name: file.name,
     mime_type: file.mimeType,
-    size_bytes: Number(file.size ?? 0),
+    size_bytes: Number.isSafeInteger(size) && size >= 0 ? size : 0,
     parent_drive_id: file.parents?.[0] ?? parentId,
     owner_user_id: ownerUserId,
     trashed: file.trashed ? 1 : 0

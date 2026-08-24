@@ -30,7 +30,7 @@ export function buildGoogleAuthorizeUrl(options: GoogleAuthorizeOptions): string
 }
 
 function quoteDrive(value: string): string {
-  return `'${value.replaceAll("'", "\\'")}'`;
+  return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
 }
 
 export function buildDriveListUrl(apiBase: string, parentId: string, search = ''): string {

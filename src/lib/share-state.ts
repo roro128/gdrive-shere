@@ -31,7 +31,7 @@ export function mergeSharePermissions(
   const knownIds = new Set(merged.map((member) => member.id));
   return [
     ...merged,
-    ...grants
+    ...[...grantsById.values()]
       .filter((grant) => !knownIds.has(grant.userId))
       .map((grant) => ({
         id: grant.userId,
@@ -65,7 +65,8 @@ export function mergeShareSearchResults<T extends ShareMember>(
   selectedIds: ReadonlySet<string>
 ): T[] {
   const previous = new Map(current.map((member) => [member.id, member]));
-  const result = available.map((member) => ({
+  const uniqueAvailable = [...new Map(available.map((member) => [member.id, member])).values()];
+  const result = uniqueAvailable.map((member) => ({
     ...member,
     permission: previous.get(member.id)?.permission ?? member.permission ?? 'viewer'
   }));
