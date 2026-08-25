@@ -49,6 +49,29 @@ export function loginLegacyPassword(
   return postJson(request, '/api/auth/password/login', { loginId, password });
 }
 
+export async function loginMemberWithFallback(
+  request: AuthRequest,
+  loginId: string,
+  password: string,
+  betterAuthSignIn: () => Promise<{ error?: { message?: string } | null }>
+): Promise<string | null> {
+  let errorMessage = '로그인 정보가 올바르지 않습니다.';
+  try {
+    const result = await betterAuthSignIn();
+    if (!result.error) return null;
+    errorMessage = result.error.message ?? errorMessage;
+  } catch (cause) {
+    errorMessage = cause instanceof Error ? cause.message : '로그인에 실패했습니다.';
+  }
+
+  try {
+    await loginLegacyPassword(request, loginId, password);
+    return null;
+  } catch {
+    return errorMessage;
+  }
+}
+
 export function registerInvite(request: AuthRequest, body: Record<string, unknown>): Promise<void> {
   return postJson(request, '/api/auth/better/register', body);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   fetchCurrentUser,
+  loginMemberWithFallback,
   loginLegacyPassword,
   logout,
   registerInvite,
@@ -88,5 +89,55 @@ describe('auth client', () => {
         'wrong password'
       )
     ).rejects.toThrow('아이디 또는 비밀번호가 올바르지 않습니다.');
+  });
+
+  it('uses the compatibility login when Better Auth returns an error', async () => {
+    const request = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const signIn = vi.fn().mockResolvedValue({ error: { message: 'Better Auth failed' } });
+
+    await expect(
+      loginMemberWithFallback(request, 'member', 'correct horse battery staple', signIn)
+    ).resolves.toBeNull();
+    expect(signIn).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledWith(
+      '/api/auth/password/login',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('keeps a successful Better Auth login on its native session', async () => {
+    const request = vi.fn();
+    const signIn = vi.fn().mockResolvedValue({ error: null });
+
+    await expect(
+      loginMemberWithFallback(request, 'member', 'correct horse battery staple', signIn)
+    ).resolves.toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('uses the compatibility login when Better Auth throws', async () => {
+    const request = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const signIn = vi.fn().mockRejectedValue(new Error('Better Auth unavailable'));
+
+    await expect(
+      loginMemberWithFallback(request, 'member', 'correct horse battery staple', signIn)
+    ).resolves.toBeNull();
+    expect(request).toHaveBeenCalledWith(
+      '/api/auth/password/login',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('keeps the Better Auth error when both login paths fail', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ message: 'wrong password' }), { status: 401 })
+      );
+    const signIn = vi.fn().mockResolvedValue({ error: { message: 'Better Auth wrong password' } });
+
+    await expect(
+      loginMemberWithFallback(request, 'member', 'wrong password', signIn)
+    ).resolves.toBe('Better Auth wrong password');
   });
 });
