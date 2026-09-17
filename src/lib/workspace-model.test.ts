@@ -11,6 +11,7 @@ import {
   sortWorkspaceFiles,
   storagePercent,
   summarizeActiveUploads,
+  summarizeUploadBatch,
   updatePendingIds
 } from './workspace-model';
 
@@ -175,8 +176,62 @@ describe('workspace collection model', () => {
     expect(result.selectedFiles.map((file) => file.id)).toEqual(['folder-a', 'new-file']);
     expect(result.activeUploads.map((upload) => upload.id)).toEqual(['upload-1']);
     expect(result.uploadProgress).toBe(40);
+    expect(result.uploadBatchSummary).toEqual({
+      totalCount: 2,
+      activeCount: 1,
+      completedCount: 1,
+      failedCount: 0,
+      progress: 70,
+      totalBytes: 0,
+      transferredBytes: 0
+    });
     expect(result.currentShareMembers.map((member) => member.id)).toEqual(['member-2']);
     expect(result.availableShareMembers.map((member) => member.id)).toEqual(['member-1']);
+  });
+
+  it('summarizes empty, active, completed, failed, and size-weighted upload batches', () => {
+    expect(summarizeUploadBatch([])).toEqual({
+      totalCount: 0,
+      activeCount: 0,
+      completedCount: 0,
+      failedCount: 0,
+      progress: 0,
+      totalBytes: 0,
+      transferredBytes: 0
+    });
+
+    // Unweighted average when sizes not provided
+    expect(
+      summarizeUploadBatch([
+        { status: 'uploading', progress: 50 },
+        { status: 'complete', progress: 100 },
+        { status: 'error', progress: 0 }
+      ])
+    ).toEqual({
+      totalCount: 3,
+      activeCount: 1,
+      completedCount: 1,
+      failedCount: 1,
+      progress: 50,
+      totalBytes: 0,
+      transferredBytes: 0
+    });
+
+    // Byte-weighted progress when sizes provided
+    expect(
+      summarizeUploadBatch([
+        { status: 'uploading', progress: 50, size: 200 },
+        { status: 'complete', progress: 100, size: 800 }
+      ])
+    ).toEqual({
+      totalCount: 2,
+      activeCount: 1,
+      completedCount: 1,
+      failedCount: 0,
+      progress: 90, // (100 + 800) / 1000 = 90%
+      totalBytes: 1000,
+      transferredBytes: 900
+    });
   });
 
   it('Given pending ids When adding and removing Then prior sets are never mutated', () => {

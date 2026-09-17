@@ -243,6 +243,7 @@ type FileItem = {
 type UploadItem = {
   id: string;
   name: string;
+  size?: number;
   progress: number;
   status: 'uploading' | 'complete' | 'error' | 'cancelled';
   error?: string;
@@ -1661,7 +1662,14 @@ function Workspace({
     const id = browserUploadRuntime.createId();
     dispatchUploadPanel({
       type: 'enqueue',
-      upload: { id, name: file.name, progress: 0, status: 'uploading', targetParentId }
+      upload: {
+        id,
+        name: file.name,
+        size: file.size,
+        progress: 0,
+        status: 'uploading',
+        targetParentId
+      }
     });
     uploadFilesById.current = setResource(uploadFilesById.current, id, file);
     void uploadOne(file, id, conflictAction, existingFileId, targetParentId);
@@ -2122,7 +2130,7 @@ function Workspace({
     visibleFiles,
     selectedFiles,
     activeUploads,
-    uploadProgress,
+    uploadBatchSummary,
     currentShareMembers,
     availableShareMembers
   } = useMemo(
@@ -2137,6 +2145,14 @@ function Workspace({
         sharedMemberIds: sharedUserIds
       }),
     [files, selectedIds, sortBy, sortDescending, uploads, shareUsers, sharedUserIds]
+  );
+  const currentFolderActiveUploads = useMemo(
+    () =>
+      uploads.filter(
+        (item) =>
+          item.status === 'uploading' && (item.targetParentId ?? null) === (folderId ?? null)
+      ),
+    [uploads, folderId]
   );
   const workspacePresentation = getWorkspacePresentation({
     showShared,
@@ -2562,6 +2578,18 @@ function Workspace({
             {refreshing && !loading && (
               <div className="table-refresh-bar" role="progressbar" aria-label="목록 새로고침 중" />
             )}
+            {activeUploads.length > 0 && !loading && (
+              <div
+                className="table-upload-bar"
+                role="progressbar"
+                aria-label={`업로드 진행 중 (${uploadBatchSummary.progress}%)`}
+              >
+                <div
+                  className="table-upload-fill"
+                  style={{ width: `${uploadBatchSummary.progress}%` }}
+                />
+              </div>
+            )}
             <div className="table-head" role="row">
               {!sharedFolderIndex && <span aria-hidden="true" />}
               {!sharedFolderIndex && <span aria-hidden="true" />}
@@ -2596,7 +2624,7 @@ function Workspace({
             </div>
             {loading ? (
               <TableSkeleton rows={6} />
-            ) : files.length === 0 ? (
+            ) : files.length === 0 && currentFolderActiveUploads.length === 0 ? (
               <div className="empty-row">
                 <span className="empty-symbol" aria-hidden="true">
                   {showRequests ? '↗' : trash ? '♧' : '＋'}
@@ -2621,192 +2649,244 @@ function Workspace({
                 </small>
               </div>
             ) : (
-              visibleFiles.map((file) => (
-                <div
-                  className={`file-row ${
-                    moveDropTarget === file.id ? 'file-row-drop-target' : ''
-                  } ${draggingFiles.some((item) => item.id === file.id) ? 'file-row-dragging' : ''} ${isOperationPending(file.id) ? 'file-row-pending' : ''}`}
-                  key={file.id}
-                  aria-busy={isOperationPending(file.id)}
-                  onPointerDown={(event) => !sharedFolderIndex && beginPointerDrag(event, file)}
-                  onPointerMove={(event) => handlePointerMove(event.nativeEvent)}
-                  onPointerUp={(event) => handlePointerUp(event.nativeEvent)}
-                  onPointerCancel={(event) => handlePointerCancel(event.nativeEvent)}
-                  onContextMenu={(event) => openContextMenu(event, file)}
-                  onKeyDown={(event) => openKeyboardContextMenu(event, file)}
-                  tabIndex={0}
-                  role="group"
-                  draggable={
-                    !sharedFolderIndex &&
-                    !trash &&
-                    !isOperationPending(file.id) &&
-                    canEditFile(file)
-                  }
-                  onDragStart={(event) => handleNativeDragStart(event, file)}
-                  onDragEnd={handleNativeDragEnd}
-                  onDragOver={(event) => isFolder(file) && handleFolderDragOver(event, file)}
-                  onDragLeave={(event) => isFolder(file) && handleNativeDragLeave(event, file.id)}
-                  onDrop={(event) => isFolder(file) && handleFolderDrop(event, file)}
-                  data-folder-drop-id={isFolder(file) ? file.id : undefined}
-                  aria-label={
-                    isFolder(file)
-                      ? `${file.name} 폴더${sharedFolderIndex ? '' : ', 이동 대상'}`
-                      : file.name
-                  }
-                >
-                  {!sharedFolderIndex && (
-                    <>
-                      <span
-                        className="drag-handle"
-                        aria-hidden="true"
-                        title={canEditFile(file) ? '이동할 파일 끌기' : '이동할 수 없는 항목'}
-                      >
-                        ⠿
+              <>
+                {currentFolderActiveUploads.map((item) => (
+                  <div
+                    className="file-row file-row-uploading"
+                    key={`table-uploading-${item.id}`}
+                    role="row"
+                    aria-label={`${item.name} 업로드 진행 중`}
+                  >
+                    {!sharedFolderIndex && (
+                      <>
+                        <span className="file-upload-indicator" aria-hidden="true">
+                          ↑
+                        </span>
+                        <span className="file-upload-spinner" aria-hidden="true" />
+                      </>
+                    )}
+                    <div className="file-main">
+                      <span className="file-copy">
+                        <strong title={item.name}>{item.name}</strong>
+                        <small>
+                          업로드 중… · {item.progress}%
+                          {item.size ? ` · ${formatBytes(String(item.size))}` : ''}
+                        </small>
+                        <div
+                          className="row-progress"
+                          role="progressbar"
+                          aria-valuenow={item.progress}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                        >
+                          <i style={{ width: `${item.progress}%` }} />
+                        </div>
                       </span>
-                      <input
-                        type="checkbox"
-                        aria-label={`${file.name} 선택`}
-                        checked={selectedIds.has(file.id)}
-                        disabled={Boolean(file.isAdminSpace) || isOperationPending(file.id)}
-                        onChange={(event) =>
-                          toggleSelect(
-                            file.id,
-                            event.currentTarget.checked,
-                            (event.nativeEvent as MouseEvent).shiftKey === true
-                          )
-                        }
-                      />
-                    </>
-                  )}
-                  <button
-                    className={`file-main ${isFolder(file) ? 'folder-link' : ''}`}
-                    aria-label={isFolder(file) ? `${file.name} 폴더 열기` : `${file.name} 미리보기`}
-                    onClick={() =>
-                      consumeSuppressedFileClick()
-                        ? undefined
-                        : isFolder(file)
-                          ? openFolder(file)
-                          : openPreview(file)
+                    </div>
+                    <span className="file-meta">
+                      {item.size ? formatBytes(String(item.size)) : '—'}
+                    </span>
+                    <span className="file-meta font-mono font-medium">{item.progress}%</span>
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="row-action-btn"
+                        onClick={() => void cancelUpload(item)}
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {visibleFiles.map((file) => (
+                  <div
+                    className={`file-row ${
+                      moveDropTarget === file.id ? 'file-row-drop-target' : ''
+                    } ${draggingFiles.some((item) => item.id === file.id) ? 'file-row-dragging' : ''} ${isOperationPending(file.id) ? 'file-row-pending' : ''}`}
+                    key={file.id}
+                    aria-busy={isOperationPending(file.id)}
+                    onPointerDown={(event) => !sharedFolderIndex && beginPointerDrag(event, file)}
+                    onPointerMove={(event) => handlePointerMove(event.nativeEvent)}
+                    onPointerUp={(event) => handlePointerUp(event.nativeEvent)}
+                    onPointerCancel={(event) => handlePointerCancel(event.nativeEvent)}
+                    onContextMenu={(event) => openContextMenu(event, file)}
+                    onKeyDown={(event) => openKeyboardContextMenu(event, file)}
+                    tabIndex={0}
+                    role="group"
+                    draggable={
+                      !sharedFolderIndex &&
+                      !trash &&
+                      !isOperationPending(file.id) &&
+                      canEditFile(file)
+                    }
+                    onDragStart={(event) => handleNativeDragStart(event, file)}
+                    onDragEnd={handleNativeDragEnd}
+                    onDragOver={(event) => isFolder(file) && handleFolderDragOver(event, file)}
+                    onDragLeave={(event) => isFolder(file) && handleNativeDragLeave(event, file.id)}
+                    onDrop={(event) => isFolder(file) && handleFolderDrop(event, file)}
+                    data-folder-drop-id={isFolder(file) ? file.id : undefined}
+                    aria-label={
+                      isFolder(file)
+                        ? `${file.name} 폴더${sharedFolderIndex ? '' : ', 이동 대상'}`
+                        : file.name
                     }
                   >
-                    <FileIcon
-                      name={file.name}
-                      mimeType={file.mimeType}
-                      thumbnailUrl={
-                        !mockMode && (isImage(file) || isVideo(file))
-                          ? `/api/files/${file.id}/thumbnail`
-                          : null
-                      }
-                    />
-                    <span className="file-copy">
-                      <strong>{file.name}</strong>
-                      <small>
-                        {file.isAdminSpace
-                          ? '사용자 개인 공간'
-                          : file.ownerName
-                            ? `${file.ownerName}의 공유 폴더`
-                            : file.sharedByMe
-                              ? '내가 공유한 폴더'
-                              : file.uploadedBy
-                                ? `${file.uploadedBy} · ${
-                                    file.uploadedAt
-                                      ? formatWorkspaceTimestamp(file.uploadedAt, true)
-                                      : '업로드'
-                                  }`
-                                : file.mimeType.split('/').pop()}
-                      </small>
-                      {file.sharedByMe && (
-                        <em className="shared-summary">
-                          {file.sharedWithCount ?? 0}명과 공유
-                          {file.sharedWithNames?.length
-                            ? ` · ${file.sharedWithNames.join(', ')}`
-                            : ''}
-                          {file.sharedWithCount &&
-                          file.sharedWithCount > (file.sharedWithNames?.length ?? 0)
-                            ? ' 외'
-                            : ''}
-                        </em>
-                      )}
-                    </span>
-                  </button>
-                  <span className="file-meta">
-                    {isFolder(file) ? '폴더' : formatBytes(file.size)}
-                  </span>
-                  <span className="file-meta">
-                    {file.modifiedTime ? formatWorkspaceTimestamp(file.modifiedTime) : '—'}
-                  </span>
-                  <div className="row-actions">
-                    {canEditFile(file) && (
-                      <button className="row-action-btn" onClick={() => beginRename(file)}>
-                        이름 변경
-                      </button>
-                    )}
-                    {!trash && !isFolder(file) && isPreviewable(file) && (
-                      <button className="row-action-btn" onClick={() => openPreview(file)}>
-                        미리보기
-                      </button>
-                    )}
-                    {!trash && file.canShare && (
-                      <button
-                        className="row-action-btn"
-                        onClick={() => void openShareSettings(file)}
-                      >
-                        공유
-                      </button>
-                    )}
-                    {!trash && !isFolder(file) && canEditFile(file) && (
-                      <button
-                        className="row-action-btn"
-                        disabled={mockMode || shareLinkBusyId === file.id}
-                        onClick={() => void createFileShareLink(file)}
-                      >
-                        {shareLinkBusyId === file.id ? '생성 중…' : '링크'}
-                      </button>
-                    )}
-                    {!trash && canTrashFile(file) ? (
-                      <button
-                        className="row-action-btn danger"
-                        disabled={isOperationPending(file.id)}
-                        onClick={() => void remove(file)}
-                      >
-                        삭제
-                      </button>
-                    ) : null}
-                    {trash && (
+                    {!sharedFolderIndex && (
                       <>
+                        <span
+                          className="drag-handle"
+                          aria-hidden="true"
+                          title={canEditFile(file) ? '이동할 파일 끌기' : '이동할 수 없는 항목'}
+                        >
+                          ⠿
+                        </span>
+                        <input
+                          type="checkbox"
+                          aria-label={`${file.name} 선택`}
+                          checked={selectedIds.has(file.id)}
+                          disabled={Boolean(file.isAdminSpace) || isOperationPending(file.id)}
+                          onChange={(event) =>
+                            toggleSelect(
+                              file.id,
+                              event.currentTarget.checked,
+                              (event.nativeEvent as MouseEvent).shiftKey === true
+                            )
+                          }
+                        />
+                      </>
+                    )}
+                    <button
+                      className={`file-main ${isFolder(file) ? 'folder-link' : ''}`}
+                      aria-label={
+                        isFolder(file) ? `${file.name} 폴더 열기` : `${file.name} 미리보기`
+                      }
+                      onClick={() =>
+                        consumeSuppressedFileClick()
+                          ? undefined
+                          : isFolder(file)
+                            ? openFolder(file)
+                            : openPreview(file)
+                      }
+                    >
+                      <FileIcon
+                        name={file.name}
+                        mimeType={file.mimeType}
+                        thumbnailUrl={
+                          !mockMode && (isImage(file) || isVideo(file))
+                            ? `/api/files/${file.id}/thumbnail`
+                            : null
+                        }
+                      />
+                      <span className="file-copy">
+                        <strong>{file.name}</strong>
+                        <small>
+                          {file.isAdminSpace
+                            ? '사용자 개인 공간'
+                            : file.ownerName
+                              ? `${file.ownerName}의 공유 폴더`
+                              : file.sharedByMe
+                                ? '내가 공유한 폴더'
+                                : file.uploadedBy
+                                  ? `${file.uploadedBy} · ${
+                                      file.uploadedAt
+                                        ? formatWorkspaceTimestamp(file.uploadedAt, true)
+                                        : '업로드'
+                                    }`
+                                  : file.mimeType.split('/').pop()}
+                        </small>
+                        {file.sharedByMe && (
+                          <em className="shared-summary">
+                            {file.sharedWithCount ?? 0}명과 공유
+                            {file.sharedWithNames?.length
+                              ? ` · ${file.sharedWithNames.join(', ')}`
+                              : ''}
+                            {file.sharedWithCount &&
+                            file.sharedWithCount > (file.sharedWithNames?.length ?? 0)
+                              ? ' 외'
+                              : ''}
+                          </em>
+                        )}
+                      </span>
+                    </button>
+                    <span className="file-meta">
+                      {isFolder(file) ? '폴더' : formatBytes(file.size)}
+                    </span>
+                    <span className="file-meta">
+                      {file.modifiedTime ? formatWorkspaceTimestamp(file.modifiedTime) : '—'}
+                    </span>
+                    <div className="row-actions">
+                      {canEditFile(file) && (
+                        <button className="row-action-btn" onClick={() => beginRename(file)}>
+                          이름 변경
+                        </button>
+                      )}
+                      {!trash && !isFolder(file) && isPreviewable(file) && (
+                        <button className="row-action-btn" onClick={() => openPreview(file)}>
+                          미리보기
+                        </button>
+                      )}
+                      {!trash && file.canShare && (
                         <button
                           className="row-action-btn"
-                          disabled={isOperationPending(file.id)}
-                          onClick={() => void restoreFile(file)}
+                          onClick={() => void openShareSettings(file)}
                         >
-                          복구
+                          공유
                         </button>
+                      )}
+                      {!trash && !isFolder(file) && canEditFile(file) && (
+                        <button
+                          className="row-action-btn"
+                          disabled={mockMode || shareLinkBusyId === file.id}
+                          onClick={() => void createFileShareLink(file)}
+                        >
+                          {shareLinkBusyId === file.id ? '생성 중…' : '링크'}
+                        </button>
+                      )}
+                      {!trash && canTrashFile(file) ? (
                         <button
                           className="row-action-btn danger"
                           disabled={isOperationPending(file.id)}
-                          onClick={() => void permanentlyDeleteFile(file)}
+                          onClick={() => void remove(file)}
                         >
-                          영구 삭제
+                          삭제
                         </button>
-                      </>
-                    )}
-                    {file.mimeType !== 'application/vnd.google-apps.folder' &&
-                      (mockMode ? (
-                        <button className="row-action-btn" onClick={() => download(file)}>
-                          다운로드
-                        </button>
-                      ) : (
-                        <a
-                          className="row-action-btn"
-                          href={`/api/files/${file.id}/download`}
-                          download
-                        >
-                          다운로드
-                        </a>
-                      ))}
+                      ) : null}
+                      {trash && (
+                        <>
+                          <button
+                            className="row-action-btn"
+                            disabled={isOperationPending(file.id)}
+                            onClick={() => void restoreFile(file)}
+                          >
+                            복구
+                          </button>
+                          <button
+                            className="row-action-btn danger"
+                            disabled={isOperationPending(file.id)}
+                            onClick={() => void permanentlyDeleteFile(file)}
+                          >
+                            영구 삭제
+                          </button>
+                        </>
+                      )}
+                      {file.mimeType !== 'application/vnd.google-apps.folder' &&
+                        (mockMode ? (
+                          <button className="row-action-btn" onClick={() => download(file)}>
+                            다운로드
+                          </button>
+                        ) : (
+                          <a
+                            className="row-action-btn"
+                            href={`/api/files/${file.id}/download`}
+                            download
+                          >
+                            다운로드
+                          </a>
+                        ))}
+                    </div>
                   </div>
-                </div>
-              ))
+                ))}
+              </>
             )}
           </div>
         </section>
@@ -3062,42 +3142,234 @@ function Workspace({
       {uploads.length > 0 && showUploadTray && (
         <section className="upload-tray" aria-label="업로드 현황">
           <div className="tray-title">
-            <strong>업로드 현황</strong>
-            <button onClick={() => dispatchUploadPanel({ type: 'set-tray', open: false })}>
-              닫기
-            </button>
-          </div>
-          {uploads.map((item) => (
-            <div className="upload-line" key={item.id}>
-              <span>
-                {item.name} ·{' '}
-                {item.status === 'uploading'
-                  ? `${item.progress}%`
-                  : item.status === 'complete'
-                    ? '완료'
-                    : item.status === 'cancelled'
-                      ? '취소됨'
-                      : (item.error ?? '실패')}
+            <div className="tray-title-left">
+              <strong>업로드 현황</strong>
+              <span className="tray-count-badge">
+                {uploadBatchSummary.activeCount > 0
+                  ? `${uploadBatchSummary.completedCount}/${uploadBatchSummary.totalCount}`
+                  : `${uploadBatchSummary.totalCount}개`}
               </span>
-              {item.status === 'uploading' && (
-                <button onClick={() => void cancelUpload(item)}>취소</button>
-              )}
-              {(item.status === 'error' || item.status === 'cancelled') && (
-                <button onClick={() => retryUpload(item)}>재시도</button>
-              )}
-              <div className="progress">
-                <i style={{ width: `${item.progress}%` }} />
-              </div>
             </div>
-          ))}
+            <div className="tray-title-actions">
+              {uploadBatchSummary.completedCount > 0 && (
+                <button
+                  type="button"
+                  className="tray-action-btn"
+                  onClick={() => dispatchUploadPanel({ type: 'clear-completed' })}
+                  title="완료된 항목 정리"
+                >
+                  완료 정리
+                </button>
+              )}
+              <button
+                type="button"
+                className="tray-action-btn"
+                onClick={() => dispatchUploadPanel({ type: 'set-tray', open: false })}
+                title="트레이 최소화"
+              >
+                최소화
+              </button>
+              {uploadBatchSummary.activeCount === 0 && (
+                <button
+                  type="button"
+                  className="tray-action-btn"
+                  onClick={() => dispatchUploadPanel({ type: 'clear-all' })}
+                  title="모두 닫기"
+                >
+                  닫기
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="tray-overall">
+            <div className="tray-overall-info">
+              <span className="tray-overall-label">
+                {uploadBatchSummary.activeCount > 0
+                  ? `전체 진행률 · ${uploadBatchSummary.activeCount}개 업로드 중`
+                  : uploadBatchSummary.failedCount > 0
+                    ? `업로드 완료 (${uploadBatchSummary.failedCount}건 실패)`
+                    : '모든 업로드 완료'}
+              </span>
+              <strong className="tray-overall-percent">{uploadBatchSummary.progress}%</strong>
+            </div>
+            <div
+              className={`progress tray-overall-bar ${
+                uploadBatchSummary.failedCount > 0 && uploadBatchSummary.activeCount === 0
+                  ? 'status-has-error'
+                  : uploadBatchSummary.activeCount === 0
+                    ? 'status-all-complete'
+                    : ''
+              }`}
+              role="progressbar"
+              aria-label="전체 업로드 진행도"
+              aria-valuenow={uploadBatchSummary.progress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <i style={{ width: `${uploadBatchSummary.progress}%` }} />
+            </div>
+            {uploadBatchSummary.totalBytes > 0 && (
+              <div className="tray-overall-bytes">
+                <span>{formatBytes(String(uploadBatchSummary.transferredBytes))}</span>
+                <span>/</span>
+                <span>{formatBytes(String(uploadBatchSummary.totalBytes))}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="tray-items">
+            {uploads.map((item) => {
+              const transferred =
+                item.size && typeof item.size === 'number'
+                  ? Math.round((item.progress / 100) * item.size)
+                  : null;
+              return (
+                <div className={`upload-line status-${item.status}`} key={item.id}>
+                  <div className="upload-line-header">
+                    <span className="upload-file-name" title={item.name}>
+                      {item.name}
+                    </span>
+                    <span className={`upload-badge badge-${item.status}`}>
+                      {item.status === 'uploading'
+                        ? `${item.progress}%`
+                        : item.status === 'complete'
+                          ? '완료'
+                          : item.status === 'cancelled'
+                            ? '취소됨'
+                            : '실패'}
+                    </span>
+                  </div>
+                  <div
+                    className="progress"
+                    role="progressbar"
+                    aria-label={`${item.name} 업로드 진행도`}
+                    aria-valuenow={item.progress}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
+                    <i style={{ width: `${item.progress}%` }} />
+                  </div>
+                  <div className="upload-line-footer">
+                    <span className="upload-line-meta">
+                      {item.status === 'uploading' &&
+                        (transferred !== null
+                          ? `${formatBytes(String(transferred))} / ${formatBytes(String(item.size))}`
+                          : `${item.progress}% 전송 중`)}
+                      {item.status === 'complete' &&
+                        (item.size ? `${formatBytes(String(item.size))} · 완료됨` : '업로드 완료')}
+                      {item.status === 'cancelled' && '취소됨'}
+                      {item.status === 'error' && (
+                        <span className="upload-error-detail" title={item.error}>
+                          {item.error ?? '업로드 오류'}
+                        </span>
+                      )}
+                    </span>
+                    <div className="upload-line-actions">
+                      {item.status === 'uploading' && (
+                        <button
+                          type="button"
+                          className="upload-line-btn"
+                          onClick={() => void cancelUpload(item)}
+                        >
+                          취소
+                        </button>
+                      )}
+                      {(item.status === 'error' || item.status === 'cancelled') && (
+                        <button
+                          type="button"
+                          className="upload-line-btn upload-retry-btn"
+                          onClick={() => retryUpload(item)}
+                        >
+                          재시도
+                        </button>
+                      )}
+                      {item.status === 'complete' && (
+                        <button
+                          type="button"
+                          className="upload-line-btn upload-remove-btn"
+                          onClick={() => dispatchUploadPanel({ type: 'remove', uploadId: item.id })}
+                          aria-label={`${item.name} 항목 제거`}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
-      {activeUploads.length > 0 && !showUploadTray && (
+      {uploads.length > 0 && !showUploadTray && (
         <button
-          className="upload-status-chip"
+          type="button"
+          className={`upload-status-chip ${
+            uploadBatchSummary.activeCount > 0
+              ? 'is-active'
+              : uploadBatchSummary.failedCount > 0
+                ? 'is-error'
+                : 'is-complete'
+          }`}
           onClick={() => dispatchUploadPanel({ type: 'set-tray', open: true })}
+          aria-label={
+            uploadBatchSummary.activeCount > 0
+              ? `업로드 ${uploadBatchSummary.activeCount}개 진행 중 · ${uploadBatchSummary.progress}%`
+              : uploadBatchSummary.failedCount > 0
+                ? `업로드 오류 ${uploadBatchSummary.failedCount}건`
+                : `업로드 ${uploadBatchSummary.completedCount}개 완료`
+          }
         >
-          업로드 {activeUploads.length}개 진행 중 · {uploadProgress}%
+          {uploadBatchSummary.activeCount > 0 ? (
+            <>
+              <svg className="chip-ring" viewBox="0 0 24 24" aria-hidden="true">
+                <circle
+                  className="chip-ring-bg"
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  fill="none"
+                  strokeWidth="3"
+                />
+                <circle
+                  className="chip-ring-val"
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  fill="none"
+                  strokeWidth="3"
+                  strokeDasharray="56.55"
+                  strokeDashoffset={56.55 - (56.55 * uploadBatchSummary.progress) / 100}
+                />
+              </svg>
+              <span>
+                업로드 {activeUploads.length}개 진행 중 · {uploadBatchSummary.progress}%
+              </span>
+            </>
+          ) : uploadBatchSummary.failedCount > 0 ? (
+            <>
+              <span aria-hidden="true">⚠️</span>
+              <span>업로드 {uploadBatchSummary.failedCount}건 실패 (확인)</span>
+            </>
+          ) : (
+            <>
+              <span aria-hidden="true">✓</span>
+              <span>업로드 {uploadBatchSummary.completedCount}개 완료</span>
+              <span
+                role="button"
+                tabIndex={0}
+                className="chip-close-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dispatchUploadPanel({ type: 'clear-all' });
+                }}
+                aria-label="알림 닫기"
+              >
+                ✕
+              </span>
+            </>
+          )}
         </button>
       )}
       {uploadConflicts.length > 0 && (

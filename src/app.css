@@ -290,7 +290,6 @@ a {
 .share-card,
 .auth-card,
 .auth-frame,
-.upload-tray,
 .context-menu,
 .modal {
   border-color: var(--border);
@@ -307,8 +306,7 @@ a {
 }
 
 .primary-button,
-.ui-button,
-.upload-status-chip {
+.ui-button {
   border-color: var(--primary);
   color: var(--primary-foreground);
   background: var(--primary);
@@ -316,8 +314,7 @@ a {
 }
 
 .primary-button:hover:not(:disabled),
-.ui-button:hover:not(:disabled),
-.upload-status-chip:hover:not(:disabled) {
+.ui-button:hover:not(:disabled) {
   border-color: var(--ring);
   color: var(--primary-foreground);
   background: #a9ce2e;

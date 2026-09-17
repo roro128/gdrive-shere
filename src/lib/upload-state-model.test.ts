@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clearCompletedUploads,
   completeUpload,
   failUpload,
   retryUpload,
@@ -50,5 +51,15 @@ describe('upload state model', () => {
   it('leaves the list unchanged when the id is unknown', () => {
     const items = [item];
     expect(completeUpload(items, 'missing')).toEqual(items);
+  });
+
+  it('filters out completed uploads and preserves active, error, or cancelled uploads', () => {
+    const items = [
+      { id: '1', progress: 100, status: 'complete' as const },
+      { id: '2', progress: 50, status: 'uploading' as const },
+      { id: '3', progress: 0, status: 'error' as const },
+      { id: '4', progress: 20, status: 'cancelled' as const }
+    ];
+    expect(clearCompletedUploads(items).map((x) => x.id)).toEqual(['2', '3', '4']);
   });
 });

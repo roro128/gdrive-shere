@@ -4,6 +4,7 @@ export type UploadStateItem = {
   id: string;
   progress: number;
   status: UploadStateStatus;
+  size?: number;
   error?: string;
   sessionId?: string;
 };
@@ -58,4 +59,8 @@ export function retryUpload<T extends UploadStateItem>(items: readonly T[], item
     error: undefined,
     sessionId: undefined
   }));
+}
+
+export function clearCompletedUploads<T extends UploadStateItem>(items: readonly T[]): T[] {
+  return items.filter((item) => item.status !== 'complete');
 }

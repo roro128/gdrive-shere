@@ -41,4 +41,22 @@ describe('uploadPanelReducer', () => {
     expect(cleared.conflicts).toEqual([]);
     expect(two.conflicts).not.toBe(cleared.conflicts);
   });
+
+  it('clears completed items or all items immutably', () => {
+    const state = {
+      uploads: [
+        { id: '1', progress: 100, status: 'complete' as const },
+        { id: '2', progress: 50, status: 'uploading' as const },
+        { id: '3', progress: 0, status: 'error' as const }
+      ],
+      showTray: true,
+      conflicts: []
+    };
+
+    const clearedCompleted = uploadPanelReducer(state, { type: 'clear-completed' });
+    expect(clearedCompleted.uploads.map((u) => u.id)).toEqual(['2', '3']);
+
+    const clearedAll = uploadPanelReducer(state, { type: 'clear-all' });
+    expect(clearedAll.uploads).toEqual([]);
+  });
 });

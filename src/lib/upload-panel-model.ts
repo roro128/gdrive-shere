@@ -1,4 +1,5 @@
 import {
+  clearCompletedUploads,
   completeUpload,
   failUpload,
   retryUpload,
@@ -20,6 +21,8 @@ export type UploadPanelAction<TUpload extends UploadStateItem, TConflict> =
   | { type: 'progress'; uploadId: string; progress: number; sessionId: string }
   | { type: 'retry'; uploadId: string }
   | { type: 'remove'; uploadId: string }
+  | { type: 'clear-completed' }
+  | { type: 'clear-all' }
   | { type: 'append-conflicts'; conflicts: readonly TConflict[] }
   | { type: 'set-conflicts'; conflicts: readonly TConflict[] };
 
@@ -60,6 +63,10 @@ export function uploadPanelReducer<TUpload extends UploadStateItem, TConflict>(
       return { ...state, uploads: retryUpload(state.uploads, action.uploadId) };
     case 'remove':
       return { ...state, uploads: state.uploads.filter((upload) => upload.id !== action.uploadId) };
+    case 'clear-completed':
+      return { ...state, uploads: clearCompletedUploads(state.uploads) };
+    case 'clear-all':
+      return { ...state, uploads: [] };
     case 'append-conflicts':
       return { ...state, conflicts: [...state.conflicts, ...action.conflicts] };
     case 'set-conflicts':

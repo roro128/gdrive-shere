@@ -24,6 +24,17 @@ export type WorkspaceCacheContext = Omit<WorkspaceLoadContext, 'isAdmin'> & {
 export type UploadProgressModel = {
   status: string;
   progress: number;
+  size?: number;
+};
+
+export type UploadBatchSummary = {
+  totalCount: number;
+  activeCount: number;
+  completedCount: number;
+  failedCount: number;
+  progress: number;
+  totalBytes: number;
+  transferredBytes: number;
 };
 
 const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
@@ -116,6 +127,63 @@ export function summarizeActiveUploads(uploads: readonly UploadProgressModel[]) 
   return { count: active.length, progress: Math.round(total / active.length) };
 }
 
+export function summarizeUploadBatch(uploads: readonly UploadProgressModel[]): UploadBatchSummary {
+  const totalCount = uploads.length;
+  if (!totalCount) {
+    return {
+      totalCount: 0,
+      activeCount: 0,
+      completedCount: 0,
+      failedCount: 0,
+      progress: 0,
+      totalBytes: 0,
+      transferredBytes: 0
+    };
+  }
+
+  let activeCount = 0;
+  let completedCount = 0;
+  let failedCount = 0;
+  let totalProgressSum = 0;
+  let totalBytes = 0;
+  let transferredBytes = 0;
+  let hasValidSizes = true;
+
+  for (const upload of uploads) {
+    const p = clampProgress(upload.progress);
+    if (upload.status === 'uploading') {
+      activeCount++;
+    } else if (upload.status === 'complete') {
+      completedCount++;
+    } else if (upload.status === 'error' || upload.status === 'cancelled') {
+      failedCount++;
+    }
+
+    if (typeof upload.size === 'number' && upload.size > 0) {
+      totalBytes += upload.size;
+      transferredBytes += Math.round((p / 100) * upload.size);
+    } else {
+      hasValidSizes = false;
+    }
+    totalProgressSum += p;
+  }
+
+  const progress =
+    hasValidSizes && totalBytes > 0
+      ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100))
+      : Math.min(100, Math.round(totalProgressSum / totalCount));
+
+  return {
+    totalCount,
+    activeCount,
+    completedCount,
+    failedCount,
+    progress,
+    totalBytes,
+    transferredBytes
+  };
+}
+
 export function deriveWorkspaceCollections<
   TFile extends WorkspaceFileModel,
   TUpload extends UploadProgressModel,
@@ -133,6 +201,7 @@ export function deriveWorkspaceCollections<
   const selectedFiles = visibleFiles.filter((file) => input.selectedIds.has(file.id));
   const activeUploads = input.uploads.filter((upload) => upload.status === 'uploading');
   const uploadSummary = summarizeActiveUploads(input.uploads);
+  const uploadBatchSummary = summarizeUploadBatch(input.uploads);
   const [currentShareMembers, availableShareMembers] = partitionByMembership(
     input.shareMembers,
     input.sharedMemberIds,
@@ -144,6 +213,7 @@ export function deriveWorkspaceCollections<
     selectedFiles,
     activeUploads,
     uploadProgress: uploadSummary.progress,
+    uploadBatchSummary,
     currentShareMembers,
     availableShareMembers
   };
